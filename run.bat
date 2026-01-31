@@ -1,12 +1,10 @@
 @echo off
-echo Starting Account Manager Tool...
-echo.
 
-uv run main.py
-
-if %errorlevel% neq 0 (
-    echo.
-    echo ERROR: Failed to start the application!
-    echo Please make sure you have run install.bat first.
+if not exist ".venv\Scripts\pythonw.exe" (
+    echo ERROR: Environment not found!
     pause
+    exit /b 1
 )
+
+start "" ".venv\Scripts\pythonw.exe" main.py
+exit
