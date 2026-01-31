@@ -18,15 +18,11 @@ Author: lethinh26
 ## Installation
 
 1. Install Python 3.8 or higher
-2. Install requirements:
+2. Run installer batch file
 ```
-pip install -r requirements.txt
+install.bat
 ```
 3. Run the application:
-```
-python main.py
-```
-or use the batch file:
 ```
 run.bat
 ```
@@ -78,4 +74,4 @@ All data stored in `data/` directory:
 - Python 3.8+
 - Google Chrome browser
 - Internet connection
-- Windows, macOS, or Linux
+- Windows
