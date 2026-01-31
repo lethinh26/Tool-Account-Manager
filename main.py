@@ -886,109 +886,108 @@ class AccountManagerGUI:
         logger.info(f"Email: {account.get('email', 'Not set')}")
         logger.info(f"Type: {account['type']}")
         
-        try:
-            proxy = None
-            if account['use_proxy']:
-                logger.info("Proxy enabled for this account")
-                if account['proxy_mode'] == 'random':
-                    proxy = self.proxy_manager.get_random_alive_proxy()
-                    if not proxy:
-                        logger.warning("No alive proxies available")
-                        messagebox.showwarning("Warning", "No alive proxies available!")
-                        return
-                    logger.info(f"Using random proxy: {proxy['host']}:{proxy['port']}")
-                elif account['proxy_mode'] == 'specific' and account['proxy_id']:
-                    proxy = self.proxy_manager.get_proxy_by_index(int(account['proxy_id']))
-                    if proxy:
-                        logger.info(f"Using specific proxy: {proxy['host']}:{proxy['port']}")
-            else:
-                logger.info("No proxy configured")
-            
-            messagebox.showinfo(
-                "Opening Browser",
-                "Creating browser instance...\nThis may take a moment."
-            )
-            
-            logger.info("Creating browser instance...")
-            driver = self.browser_manager.create_browser(
-                account_id,
-                account['profile_path'],
-                proxy
-            )
-            
-            logger.info("Browser created successfully")
-            self.browser_manager.open_login_page(driver, account['type'])
-            logger.info(f"Navigated to {account['type']} login page")
-            
-            import time
-            self.account_manager.update_account(
-                account_id,
-                last_opened=time.strftime('%Y-%m-%d %H:%M:%S')
-            )
-            
-            def monitor_login_status():
+        def open_browser_thread():
+            try:
+                proxy = None
+                if account['use_proxy']:
+                    logger.info("Proxy enabled for this account")
+                    if account['proxy_mode'] == 'random':
+                        proxy = self.proxy_manager.get_random_alive_proxy()
+                        if not proxy:
+                            logger.warning("No alive proxies available")
+                            self.root.after(0, lambda: messagebox.showwarning("Warning", "No alive proxies available!"))
+                            return
+                        logger.info(f"Using random proxy: {proxy['host']}:{proxy['port']}")
+                    elif account['proxy_mode'] == 'specific' and account['proxy_id']:
+                        proxy = self.proxy_manager.get_proxy_by_index(int(account['proxy_id']))
+                        if proxy:
+                            logger.info(f"Using specific proxy: {proxy['host']}:{proxy['port']}")
+                else:
+                    logger.info("No proxy configured")
+                
+                logger.info("Creating browser instance...")
+                driver = self.browser_manager.create_browser(
+                    account_id,
+                    account['profile_path'],
+                    proxy
+                )
+                
+                logger.info("Browser created successfully")
+                self.browser_manager.open_login_page(driver, account['type'])
+                logger.info(f"Navigated to {account['type']} login page")
+                
                 import time
-                max_wait = 300
-                wait_time = 0
-                check_interval = 5
+                self.account_manager.update_account(
+                    account_id,
+                    last_opened=time.strftime('%Y-%m-%d %H:%M:%S')
+                )
                 
                 self.root.after(0, self.refresh_accounts)
-                logger.info("Started monitoring login status...")
                 
-                while wait_time < max_wait:
-                    time.sleep(check_interval)
-                    wait_time += check_interval
-                    
-                    if not self.browser_manager.is_browser_open(account_id):
-                        logger.info("Browser was closed by user")
-                        self.root.after(0, self.refresh_accounts)
-                        break
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "Browser Opened",
+                    "Browser is ready!\n"
+                    "Please login manually in the browser.\n"
+                    "The status will be automatically updated when you login."
+                ))
                 
-                    logged_in = self.browser_manager.check_login_status(account_id, account['type'])
+                def monitor_login_status():
+                    import time
+                    max_wait = 300
+                    wait_time = 0
+                    check_interval = 5
                     
-                    if logged_in:
-                        logger.info("Login detected!")
-                        email = self.browser_manager.extract_email(driver, account['type'])
-                        if email:
-                            logger.info(f"Email extracted: {email}")
-                            self.account_manager.update_account(account_id, email=email)
-                        else:
-                            logger.info("Could not extract email")
+                    logger.info("Started monitoring login status...")
+                    
+                    while wait_time < max_wait:
+                        time.sleep(check_interval)
+                        wait_time += check_interval
                         
-                        self.account_manager.update_account(account_id, status='logged_in')
-                        logger.info("Status updated to: logged_in")
-                        self.root.after(0, self.refresh_accounts)
-                        break
-                    else:
-                        self.account_manager.update_account(account_id, status='not_logged_in')
+                        if not self.browser_manager.is_browser_open(account_id):
+                            logger.info("Browser was closed by user")
+                            self.root.after(0, self.refresh_accounts)
+                            break
+                    
+                        logged_in = self.browser_manager.check_login_status(account_id, account['type'])
+                        
+                        if logged_in:
+                            logger.info("Login detected!")
+                            email = self.browser_manager.extract_email(driver, account['type'])
+                            if email:
+                                logger.info(f"Email extracted: {email}")
+                                self.account_manager.update_account(account_id, email=email)
+                            else:
+                                logger.info("Could not extract email")
+                            
+                            self.account_manager.update_account(account_id, status='logged_in')
+                            logger.info("Status updated to: logged_in")
+                            self.root.after(0, self.refresh_accounts)
+                            break
+                        else:
+                            self.account_manager.update_account(account_id, status='not_logged_in')
+                    
+                    if wait_time >= max_wait:
+                        logger.info("Login monitoring timed out after 5 minutes")
                 
-                if wait_time >= max_wait:
-                    logger.info("Login monitoring timed out after 5 minutes")
-            
-            threading.Thread(target=monitor_login_status, daemon=True).start()
-            
-            messagebox.showinfo(
-                "Browser Opened",
-                "Browser is ready!\n"
-                "Please login manually in the browser.\n"
-                "The status will be automatically updated when you login."
-            )
-            
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Failed to open browser: {error_msg}")
-            if "WinError 193" in error_msg or "not a valid Win32 application" in error_msg:
-                messagebox.showerror(
-                    "ChromeDriver Error",
-                    "Failed to start ChromeDriver.\n\n"
-                    "Solutions:\n"
-                    "1. Make sure Google Chrome is installed\n"
-                    "2. Try running: pip install --upgrade selenium webdriver-manager\n"
-                    "3. Restart the application\n\n"
-                    f"Technical error: {error_msg}"
-                )
-            else:
-                messagebox.showerror("Error", f"Failed to open browser:\n\n{error_msg}")
+                threading.Thread(target=monitor_login_status, daemon=True).start()
+                
+            except Exception as e:
+                error_msg = str(e)
+                logger.error(f"Failed to open browser: {error_msg}")
+                if "WinError 193" in error_msg or "not a valid Win32 application" in error_msg:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "ChromeDriver Error",
+                        "Failed to start ChromeDriver.\n\n"
+                        "Solutions:\n"
+                        "1. Make sure Google Chrome is installed\n"
+                        "2. Try running: pip install --upgrade selenium webdriver-manager\n"
+                        "3. Restart the application\n\n"
+                        f"Technical error: {error_msg}"
+                    ))
+                else:
+                    self.root.after(0, lambda: messagebox.showerror("Error", f"Failed to open browser:\n\n{error_msg}"))
+        
+        threading.Thread(target=open_browser_thread, daemon=True).start()
     
     def run(self):
         """Run the application"""
