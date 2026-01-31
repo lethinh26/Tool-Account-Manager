@@ -172,9 +172,9 @@ class AccountManagerGUI:
         self.accounts_frame = ctk.CTkScrollableFrame(self.tab_accounts, corner_radius=12, fg_color=COLORS['dark'])
         self.accounts_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
-        headers_frame = ctk.CTkFrame(self.accounts_frame, fg_color=COLORS['light'], height=35)
-        headers_frame.pack(fill="x", pady=(0, 1))
-        headers_frame.pack_propagate(False)
+        self.accounts_header_frame = ctk.CTkFrame(self.accounts_frame, fg_color=COLORS['light'], height=35)
+        self.accounts_header_frame.pack(fill="x", pady=(0, 1))
+        self.accounts_header_frame.pack_propagate(False)
         
         headers = [
             ("", 50),
@@ -188,7 +188,7 @@ class AccountManagerGUI:
         
         for header, width in headers:
             label = ctk.CTkLabel(
-                headers_frame,
+                self.accounts_header_frame,
                 text=header,
                 font=ctk.CTkFont(size=12, weight="bold"),
                 width=width,
@@ -267,9 +267,9 @@ class AccountManagerGUI:
         self.proxies_frame = ctk.CTkScrollableFrame(self.tab_proxies, corner_radius=12, fg_color=COLORS['dark'])
         self.proxies_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
-        headers_frame = ctk.CTkFrame(self.proxies_frame, fg_color=COLORS['light'], height=35)
-        headers_frame.pack(fill="x", pady=(0, 1))
-        headers_frame.pack_propagate(False)
+        self.proxies_header_frame = ctk.CTkFrame(self.proxies_frame, fg_color=COLORS['light'], height=35)
+        self.proxies_header_frame.pack(fill="x", pady=(0, 1))
+        self.proxies_header_frame.pack_propagate(False)
         
         headers = [
             ("", 50),
@@ -285,7 +285,7 @@ class AccountManagerGUI:
         
         for header, width in headers:
             label = ctk.CTkLabel(
-                headers_frame,
+                self.proxies_header_frame,
                 text=header,
                 font=ctk.CTkFont(size=12, weight="bold"),
                 width=width,
@@ -314,15 +314,8 @@ class AccountManagerGUI:
     
     def refresh_accounts(self):
         for widget in self.accounts_frame.winfo_children():
-            if widget.winfo_children() and len(widget.winfo_children()) > 0:
-                first_child = widget.winfo_children()[0]
-                if hasattr(first_child, 'cget'):
-                    try:
-                        text = first_child.cget("text")
-                        if text and isinstance(text, str) and "Type" not in text:
-                            widget.destroy()
-                    except:
-                        widget.destroy()
+            if widget != self.accounts_header_frame:
+                widget.destroy()
         
         accounts = self.account_manager.get_all_accounts()
         
@@ -470,15 +463,8 @@ class AccountManagerGUI:
     
     def refresh_proxies(self):
         for widget in self.proxies_frame.winfo_children():
-            if widget.winfo_children() and len(widget.winfo_children()) > 0:
-                first_child = widget.winfo_children()[0]
-                if hasattr(first_child, 'cget'):
-                    try:
-                        text = first_child.cget("text")
-                        if text and isinstance(text, str) and "Protocol" not in text:
-                            widget.destroy()
-                    except:
-                        widget.destroy()
+            if widget != self.proxies_header_frame:
+                widget.destroy()
         
         proxies = self.proxy_manager.get_all_proxies()
         
