@@ -1,8 +1,8 @@
 import customtkinter as ctk
 from tkinter import messagebox
 from typing import Callable, Optional
-from config import COLORS
-from proxy_manager import ProxyManager
+from src.config import COLORS
+from src.core import ProxyManager
 
 
 class AddAccountDialog(ctk.CTkToplevel):
@@ -235,8 +235,7 @@ class AddAccountDialog(ctk.CTkToplevel):
     
     def create_account(self):
         """Create account and open browser"""
-        from account_manager import AccountManager
-        from browser_manager import BrowserManager
+        from src.core import AccountManager, BrowserManager
         import threading
         
         account_type = self.account_type_var.get()

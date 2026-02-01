@@ -7,8 +7,8 @@ import shutil
 import logging
 from pathlib import Path
 from typing import Optional, Dict
-from config import CHROME_OPTIONS
-from local_proxy_manager import LocalProxyManager
+from src.config import CHROME_OPTIONS
+from src.core.local_proxy_manager import LocalProxyManager
 
 
 class BrowserManager:

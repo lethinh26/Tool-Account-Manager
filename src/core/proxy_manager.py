@@ -8,7 +8,7 @@ import requests
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional
-from config import PROXIES_FILE
+from src.config import PROXIES_FILE
 
 
 class ProxyManager:

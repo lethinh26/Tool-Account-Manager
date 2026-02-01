@@ -68,6 +68,39 @@ All data stored in `data/` directory:
 - `proxies.json` - Proxy list
 - `profiles/` - Browser profile data
 - `logs/` - Per-account log files
+- `logs/errors/` - Daily error log files
+
+## Project Structure
+
+```
+Tool Manager Account/
+├── main.py                 # Application entry point
+├── config.py              # Configuration wrapper (backward compatibility)
+├── requirements.txt       # Python dependencies
+├── install.bat           # Installation script
+├── run.bat              # Launch script
+├── src/                 # Source code
+│   ├── core/           # Core business logic
+│   │   ├── account_manager.py
+│   │   ├── proxy_manager.py
+│   │   ├── browser_manager.py
+│   │   └── local_proxy_manager.py
+│   ├── gui/            # GUI components
+│   │   ├── main_window.py
+│   │   ├── dialogs.py
+│   │   ├── widgets/    # Custom widgets (future)
+│   │   └── tabs/       # Tab components (future)
+│   ├── config/         # Configuration
+│   │   └── settings.py
+│   ├── utils/          # Utility functions (future)
+│   └── models/         # Data models (future)
+├── data/               # Application data
+│   ├── accounts.json
+│   ├── proxies.json
+│   ├── profiles/       # Browser profiles
+│   └── logs/          # Log files
+└── assets/            # Resources (future)
+```
 
 ## Requirements
 

@@ -2,7 +2,7 @@ import json
 import os
 import uuid
 from typing import List, Dict, Optional
-from config import ACCOUNTS_FILE, PROFILES_DIR
+from src.config import ACCOUNTS_FILE, PROFILES_DIR
 
 
 class AccountManager:
