@@ -1,7 +1,3 @@
-"""
-Proxy Manager Module
-Handles proxy operations including adding, removing, checking, and managing proxies
-"""
 import json
 import os
 import requests
@@ -16,7 +12,6 @@ class ProxyManager:
         self.proxies = self.load_proxies()
     
     def load_proxies(self) -> List[Dict]:
-        """Load proxies from JSON file"""
         if os.path.exists(PROXIES_FILE):
             try:
                 with open(PROXIES_FILE, 'r', encoding='utf-8') as f:
@@ -26,16 +21,12 @@ class ProxyManager:
         return []
     
     def save_proxies(self):
-        """Save proxies to JSON file"""
         with open(PROXIES_FILE, 'w', encoding='utf-8') as f:
             json.dump(self.proxies, f, indent=2, ensure_ascii=False)
     
     def add_proxy(self, proxy_string: str) -> bool:
-        """
-        Add proxy from string format: protocol://host:port:user:pass or protocol://host:port
-        """
+        """protocol://host:port:user:pass or protocol://host:port"""
         try:
-            # Parse proxy string
             proxy_data = self.parse_proxy_string(proxy_string)
             if not proxy_data:
                 return False
@@ -62,7 +53,6 @@ class ProxyManager:
             return False
     
     def parse_proxy_string(self, proxy_string: str) -> Optional[Dict]:
-        """Parse proxy string into dictionary"""
         try:
             if '://' in proxy_string:
                 protocol, rest = proxy_string.split('://', 1)
@@ -96,7 +86,6 @@ class ProxyManager:
             return None
     
     def add_proxies_from_file(self, file_path: str) -> int:
-        """Add multiple proxies from text file"""
         count = 0
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -111,7 +100,6 @@ class ProxyManager:
         return count
     
     def remove_proxy(self, index: int) -> bool:
-        """Remove proxy by index"""
         try:
             if 0 <= index < len(self.proxies):
                 self.proxies.pop(index)
@@ -122,7 +110,6 @@ class ProxyManager:
             return False
     
     def remove_proxies(self, indices: List[int]) -> int:
-        """Remove multiple proxies by indices"""
         count = 0
         for index in sorted(indices, reverse=True):
             if self.remove_proxy(index):
@@ -130,7 +117,6 @@ class ProxyManager:
         return count
     
     def check_proxy(self, proxy: Dict, timeout: int = 10) -> Dict:
-        """Check proxy working"""
         import time
         try:
             protocol = proxy['protocol'].lower()
@@ -191,7 +177,6 @@ class ProxyManager:
             return proxy
     
     def check_all_proxies(self, callback=None, progress_callback=None, max_workers: int = 10):
-        """Check all proxies"""
         total = len(self.proxies)
         completed = 0
         lock = threading.Lock()
@@ -215,7 +200,6 @@ class ProxyManager:
         self.save_proxies()
     
     def get_random_alive_proxy(self) -> Optional[Dict]:
-        """Get random alive proxy"""
         import random
         alive_proxies = [p for p in self.proxies if p['status'] == 'alive']
         if alive_proxies:
@@ -223,17 +207,14 @@ class ProxyManager:
         return None
     
     def get_all_proxies(self) -> List[Dict]:
-        """Get all proxies"""
         return self.proxies
     
     def get_proxy_by_index(self, index: int) -> Optional[Dict]:
-        """Get proxy by index"""
         if 0 <= index < len(self.proxies):
             return self.proxies[index]
         return None
     
     def clear_dead_proxies(self) -> int:
-        """Remove all dead proxies"""
         original_count = len(self.proxies)
         self.proxies = [p for p in self.proxies if p['status'] != 'dead']
         self.save_proxies()

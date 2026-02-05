@@ -623,7 +623,7 @@ class EditAccountDialog(ctk.CTkToplevel):
         )
         title.pack(pady=20)
         
-        form_frame = ctk.CTkFrame(self)
+        form_frame = ctk.CTkScrollableFrame(self)
         form_frame.pack(fill="both", expand=True, padx=20, pady=10)
         
         ctk.CTkLabel(

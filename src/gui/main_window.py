@@ -6,6 +6,7 @@ import os
 from typing import Optional, List
 from datetime import datetime
 from src.core import AccountManager, ProxyManager, BrowserManager
+from src.core.simple_group import SimpleGroupManager
 from src.config import WINDOW_SIZE, THEME, COLORS, DATA_DIR
 
 
@@ -17,6 +18,7 @@ class AccountManagerGUI:
         self.account_manager = AccountManager()
         self.proxy_manager = ProxyManager()
         self.browser_manager = BrowserManager()
+        self.simple_group = SimpleGroupManager(DATA_DIR)
         
         self.root = ctk.CTk()
         self.root.title("Account Manager Tool")
@@ -30,6 +32,11 @@ class AccountManagerGUI:
         self.selected_proxies = []
         self.log_tabs = {}
         self.toast_queue = []
+        self.active_tooltip = None
+        self.tooltip_timer = None
+        self.expanded_groups = {}
+        self.group_widgets = {}
+        self.loading_tasks = {}
         
         self.setup_error_logger()
         
@@ -137,7 +144,7 @@ class AccountManagerGUI:
         self.setup_logs_tab()
     
     def setup_accounts_tab(self):
-        """Setup accounts tab"""
+        """Setup accounts tab with Treeview"""
 
         stats_frame = ctk.CTkFrame(self.tab_accounts, corner_radius=12, fg_color=COLORS['light'])
         stats_frame.pack(fill="x", padx=10, pady=10)
@@ -162,6 +169,14 @@ class AccountManagerGUI:
             fg_color=COLORS['success'],
             hover_color="#25a56f",
             width=120
+        ).pack(side="left", padx=5)
+        
+        ctk.CTkButton(
+            left_buttons,
+            text="New Group",
+            command=self.create_group_dialog,
+            fg_color=COLORS['primary'],
+            width=100
         ).pack(side="left", padx=5)
         
         ctk.CTkButton(
@@ -191,15 +206,16 @@ class AccountManagerGUI:
         self.search_entry.pack(side="left", padx=5)
         self.search_entry.bind('<KeyRelease>', lambda e: self.search_accounts())
         
+        # Accounts list + scrollable frame
         self.accounts_frame = ctk.CTkScrollableFrame(self.tab_accounts, corner_radius=12, fg_color=COLORS['dark'])
         self.accounts_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
+        # Header
         self.accounts_header_frame = ctk.CTkFrame(self.accounts_frame, fg_color=COLORS['light'], height=35)
         self.accounts_header_frame.pack(fill="x", pady=(0, 1))
         self.accounts_header_frame.pack_propagate(False)
         
         headers = [
-            ("", 50),
             ("Type", 100),
             ("Email", 250),
             ("Name", 180),
@@ -345,16 +361,179 @@ class AccountManagerGUI:
         ctk.set_appearance_mode(mode.lower())
     
     def refresh_accounts(self):
+        """Refresh accounts display groups"""
+        for task_id in list(self.loading_tasks.keys()):
+            try:
+                self.root.after_cancel(self.loading_tasks[task_id])
+            except:
+                pass
+        self.loading_tasks.clear()
+        
         for widget in self.accounts_frame.winfo_children():
             if widget != self.accounts_header_frame:
                 widget.destroy()
         
-        accounts = self.account_manager.get_all_accounts()
+        self.group_widgets.clear()
         
-        if accounts:
-            for account in accounts:
-                self.create_account_row(account)
-        else:
+        accounts = self.account_manager.get_all_accounts()
+        groups = self.simple_group.get_all_groups()
+        grouped_account_ids = set()
+        
+        for group in groups:
+            if group['id'] not in self.expanded_groups:
+                self.expanded_groups[group['id']] = True  # df: expanded
+            
+            is_expanded = self.expanded_groups[group['id']]
+            icon = "▼" if is_expanded else "▶"
+            
+            group_container = ctk.CTkFrame(self.accounts_frame, fg_color="transparent")
+            group_container.pack(fill="x", pady=(5, 1))
+            
+            group_header = ctk.CTkFrame(group_container, fg_color=COLORS['primary'], height=40)
+            group_header.pack(fill="x")
+            group_header.pack_propagate(False)
+            
+            # Expand/collapse
+            icon_btn = ctk.CTkButton(
+                group_header,
+                text=icon,
+                command=lambda gid=group['id']: self.toggle_group(gid),
+                width=30,
+                height=20,
+                font=ctk.CTkFont(size=14, weight="bold"),
+                fg_color="transparent",
+                hover_color=COLORS['primary']
+            )
+            icon_btn.pack(side="left", padx=(5, 0))
+            
+            group_label = ctk.CTkLabel(
+                group_header,
+                text=f"{group['name']} ({len(group['accounts'])} accounts)",
+                font=ctk.CTkFont(size=13, weight="bold"),
+                anchor="w",
+                cursor="hand2"
+            )
+            group_label.pack(side="left", padx=5, pady=5)
+            group_label.bind("<Button-1>", lambda e, gid=group['id']: self.toggle_group(gid))
+            
+            ctk.CTkButton(
+                group_header,
+                text="Add Account",
+                command=lambda gid=group['id']: self.add_accounts_to_group_dialog(gid),
+                width=80,
+                height=25,
+                fg_color=COLORS['success'],
+                font=ctk.CTkFont(size=10)
+            ).pack(side="right", padx=10)
+            
+            ctk.CTkButton(
+                group_header,
+                text="Edit",
+                command=lambda gid=group['id']: self.edit_group_name(gid),
+                width=50,
+                height=25,
+                fg_color=COLORS['warning'],
+                font=ctk.CTkFont(size=10)
+            ).pack(side="right", padx=5)
+            
+            ctk.CTkButton(
+                group_header,
+                text="Delete",
+                command=lambda gid=group['id']: self.delete_group(gid),
+                width=50,
+                height=25,
+                fg_color=COLORS['danger'],
+                font=ctk.CTkFont(size=10)
+            ).pack(side="right", padx=5)
+            
+            group_body = ctk.CTkFrame(group_container, fg_color="transparent")
+            
+            self.group_widgets[group['id']] = {
+                'container': group_container,
+                'header': group_header,
+                'body': group_body,
+                'icon_btn': icon_btn,
+                'group_label': group_label,
+                'accounts_built': False,
+                'account_ids': group['accounts'].copy()
+            }
+            
+            if is_expanded and len(group['accounts']) > 0:
+                group_body.pack(fill="x")
+                account_count = len(group['accounts'])
+                if account_count > 30:
+                    loading_label = ctk.CTkLabel(
+                        group_body,
+                        text=f"Loading {account_count} accounts...",
+                        font=ctk.CTkFont(size=11),
+                        text_color=COLORS['warning']
+                    )
+                    loading_label.pack(pady=10)
+                    self._build_group_accounts_lazy(group['id'], group['accounts'], grouped_account_ids, loading_label)
+                else:
+                    self._build_group_accounts_immediate(group['id'], group['accounts'], grouped_account_ids)
+                self.group_widgets[group['id']]['accounts_built'] = True
+            
+            for account_id in group['accounts']:
+                grouped_account_ids.add(account_id)
+        
+        ungrouped_accounts = [acc for acc in accounts if acc['id'] not in grouped_account_ids]
+        
+        if ungrouped_accounts:
+            if 'ungrouped' not in self.expanded_groups:
+                self.expanded_groups['ungrouped'] = True
+            
+            is_ungrouped_expanded = self.expanded_groups['ungrouped']
+            ungrouped_icon = "▼" if is_ungrouped_expanded else "▶"
+            
+            ungrouped_container = ctk.CTkFrame(self.accounts_frame, fg_color="transparent")
+            ungrouped_container.pack(fill="x", pady=(10, 1))
+            
+            ungrouped_header = ctk.CTkFrame(ungrouped_container, fg_color=COLORS['light'], height=30)
+            ungrouped_header.pack(fill="x")
+            ungrouped_header.pack_propagate(False)
+            
+            ungrouped_icon_btn = ctk.CTkButton(
+                ungrouped_header,
+                text=ungrouped_icon,
+                command=lambda: self.toggle_ungrouped(),
+                width=30,
+                height=20,
+                font=ctk.CTkFont(size=14, weight="bold"),
+                fg_color="transparent",
+                hover_color=COLORS['light']
+            )
+            ungrouped_icon_btn.pack(side="left", padx=(5, 0))
+            
+            ungrouped_label = ctk.CTkLabel(
+                ungrouped_header,
+                text=f"Ungrouped Accounts ({len(ungrouped_accounts)})",
+                font=ctk.CTkFont(size=12, weight="bold"),
+                anchor="w",
+                cursor="hand2"
+            )
+            ungrouped_label.pack(side="left", padx=5, pady=5)
+            ungrouped_label.bind("<Button-1>", lambda e: self.toggle_ungrouped())
+            
+            # body
+            ungrouped_body = ctk.CTkFrame(ungrouped_container, fg_color="transparent")
+            
+            self.group_widgets['ungrouped'] = {
+                'container': ungrouped_container,
+                'header': ungrouped_header,
+                'body': ungrouped_body,
+                'icon_btn': ungrouped_icon_btn,
+                'accounts_built': False,
+                'accounts': ungrouped_accounts.copy()
+            }
+            
+            if is_ungrouped_expanded:
+                ungrouped_body.pack(fill="x")
+                for account in ungrouped_accounts:
+                    self.create_account_row(account, in_group=False, parent=ungrouped_body)
+                self.group_widgets['ungrouped']['accounts_built'] = True
+        
+        if not accounts:
             empty = ctk.CTkLabel(
                 self.accounts_frame,
                 text="No accounts yet. Click 'Add Account' to begin.",
@@ -364,9 +543,351 @@ class AccountManagerGUI:
         
         self.update_stats()
     
-    def create_account_row(self, account: dict):
-        """Create a row for an account"""
-        row_frame = ctk.CTkFrame(self.accounts_frame, fg_color=COLORS['light'], height=35)
+    def _build_group_accounts_immediate(self, group_id: str, account_ids: list, grouped_account_ids: set):
+        """Build all accounts immediately group"""
+        if group_id not in self.group_widgets:
+            return
+        
+        body = self.group_widgets[group_id]['body']
+        for account_id in account_ids:
+            account = self.account_manager.get_account(account_id)
+            if account:
+                self.create_account_row(account, in_group=True, group_id=group_id, parent=body)
+                grouped_account_ids.add(account_id)
+    
+    def _build_group_accounts_lazy(self, group_id: str, account_ids: list, grouped_account_ids: set, loading_label=None):
+        """Build accounts in chunks"""
+        if group_id not in self.group_widgets:
+            return
+        
+        body = self.group_widgets[group_id]['body']
+        chunk_size = 40  # accounts
+        
+        def build_chunk(start_idx):
+            if group_id not in self.group_widgets or not self.expanded_groups.get(group_id, False):
+                return
+            
+            end_idx = min(start_idx + chunk_size, len(account_ids))
+            
+            for i in range(start_idx, end_idx):
+                account_id = account_ids[i]
+                account = self.account_manager.get_account(account_id)
+                if account:
+                    self.create_account_row(account, in_group=True, group_id=group_id, parent=body)
+                    grouped_account_ids.add(account_id)
+            
+            if start_idx == 0 and loading_label and loading_label.winfo_exists():
+                loading_label.destroy()
+            
+            if end_idx < len(account_ids):
+                task_id = self.root.after(10, lambda: build_chunk(end_idx))
+                self.loading_tasks[f"{group_id}_{end_idx}"] = task_id
+            else:
+                if group_id in self.group_widgets:
+                    self.group_widgets[group_id]['accounts_built'] = True
+        
+        build_chunk(0)
+    
+    def create_group_dialog(self):
+        """Dialog new group"""
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Create Group")
+        dialog.geometry("400x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ctk.CTkLabel(dialog, text="Enter Group Name:", font=self.font_h2).pack(pady=20)
+        
+        name_entry = ctk.CTkEntry(dialog, width=300, placeholder_text="Group Name")
+        name_entry.pack(pady=10)
+        name_entry.focus()
+        
+        def create():
+            name = name_entry.get().strip()
+            if name:
+                self.simple_group.create_group(name)
+                self.refresh_accounts()
+                self.show_toast(f"Group '{name}' created", "success")
+                dialog.destroy()
+            else:
+                messagebox.showwarning("Invalid Input", "Please enter a group name")
+        
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(pady=20)
+        
+        ctk.CTkButton(button_frame, text="Create", command=create, fg_color=COLORS['success'], width=120).pack(side="left", padx=5)
+        ctk.CTkButton(button_frame, text="Cancel", command=dialog.destroy, width=120).pack(side="left", padx=5)
+        
+        dialog.bind('<Return>', lambda e: create())
+    
+    def add_accounts_to_group_dialog(self, group_id: str):
+        """Dialog to add account group"""
+        group = self.simple_group.get_group(group_id)
+        if not group:
+            return
+        
+        all_accounts = self.account_manager.get_all_accounts()
+        grouped_account_ids = set()
+        
+        for g in self.simple_group.get_all_groups():
+            grouped_account_ids.update(g['accounts'])
+        
+        ungrouped_accounts = [acc for acc in all_accounts if acc['id'] not in grouped_account_ids]
+        
+        if not ungrouped_accounts:
+            messagebox.showinfo("No Accounts", "All accounts are already in groups")
+            return
+        
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title(f"Add Accounts to '{group['name']}'")
+        dialog.geometry("500x400")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ctk.CTkLabel(
+            dialog,
+            text=f"Select accounts to add to '{group['name']}'",
+            font=self.font_h2
+        ).pack(pady=15)
+        
+        scroll_frame = ctk.CTkScrollableFrame(dialog)
+        scroll_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        checkboxes = {}
+        
+        for account in ungrouped_accounts:
+            var = ctk.BooleanVar(value=False)
+            checkboxes[account['id']] = var
+            
+            acc_frame = ctk.CTkFrame(scroll_frame, fg_color=COLORS['light'])
+            acc_frame.pack(fill="x", pady=2, padx=5)
+            
+            checkbox = ctk.CTkCheckBox(
+                acc_frame,
+                text=f"{account.get('name', 'Unnamed')} - {account.get('email', 'No email')} ({account['type'].title()})",
+                variable=var,
+                font=ctk.CTkFont(size=12)
+            )
+            checkbox.pack(side="left", padx=10, pady=8)
+        
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(pady=15)
+        
+        def select_all():
+            for var in checkboxes.values():
+                var.set(True)
+        
+        def deselect_all():
+            for var in checkboxes.values():
+                var.set(False)
+        
+        def add_selected():
+            selected_ids = [acc_id for acc_id, var in checkboxes.items() if var.get()]
+            
+            if not selected_ids:
+                messagebox.showwarning("No Selection", "Please select at least one account")
+                return
+            
+            for acc_id in selected_ids:
+                self.simple_group.add_account_to_group(group_id, acc_id)
+            
+            self.refresh_accounts()
+            self.show_toast(f"Added {len(selected_ids)} account(s) to '{group['name']}'", "success")
+            dialog.destroy()
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Select All",
+            command=select_all,
+            width=100
+        ).pack(side="left", padx=5)
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Deselect All",
+            command=deselect_all,
+            width=100
+        ).pack(side="left", padx=5)
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Add Selected",
+            command=add_selected,
+            fg_color=COLORS['success'],
+            width=120
+        ).pack(side="left", padx=5)
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Cancel",
+            command=dialog.destroy,
+            width=100
+        ).pack(side="left", padx=5)
+    
+    def remove_from_group_dialog(self, account_id: str):
+        """Dialog remove account group"""
+        group_ids = self.simple_group.get_account_groups(account_id)
+        
+        if not group_ids:
+            return
+        
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Remove from Group")
+        dialog.geometry("400x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ctk.CTkLabel(dialog, text="Select Group to Remove From:", font=self.font_h2).pack(pady=20)
+        
+        group_var = ctk.StringVar()
+        
+        for group_id in group_ids:
+            group = self.simple_group.get_group(group_id)
+            if group:
+                ctk.CTkRadioButton(
+                    dialog,
+                    text=group['name'],
+                    variable=group_var,
+                    value=group_id
+                ).pack(pady=5)
+        
+        def remove():
+            group_id = group_var.get()
+            if group_id:
+                self.simple_group.remove_account_from_group(group_id, account_id)
+                self.refresh_accounts()
+                group_name = self.simple_group.get_group(group_id)['name']
+                self.show_toast(f"Account removed from '{group_name}'", "success")
+                dialog.destroy()
+            else:
+                messagebox.showwarning("No Selection", "Please select a group")
+        
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(pady=20)
+        
+        ctk.CTkButton(button_frame, text="Remove", command=remove, fg_color=COLORS['danger'], width=120).pack(side="left", padx=5)
+        ctk.CTkButton(button_frame, text="Cancel", command=dialog.destroy, width=120).pack(side="left", padx=5)
+    
+    def edit_group_name(self, group_id: str):
+        """Dialog edit group name"""
+        group = self.simple_group.get_group(group_id)
+        if not group:
+            return
+        
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Edit Group Name")
+        dialog.geometry("400x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ctk.CTkLabel(dialog, text="Enter New Name:", font=self.font_h2).pack(pady=20)
+        
+        name_entry = ctk.CTkEntry(dialog, width=300)
+        name_entry.insert(0, group['name'])
+        name_entry.pack(pady=10)
+        name_entry.focus()
+        name_entry.select_range(0, 'end')
+        
+        def save():
+            new_name = name_entry.get().strip()
+            if new_name:
+                self.simple_group.rename_group(group_id, new_name)
+                self.refresh_accounts()
+                self.show_toast(f"Group renamed to '{new_name}'", "success")
+                dialog.destroy()
+            else:
+                messagebox.showwarning("Invalid Input", "Please enter a group name")
+        
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(pady=20)
+        
+        ctk.CTkButton(button_frame, text="Save", command=save, fg_color=COLORS['success'], width=120).pack(side="left", padx=5)
+        ctk.CTkButton(button_frame, text="Cancel", command=dialog.destroy, width=120).pack(side="left", padx=5)
+        
+        dialog.bind('<Return>', lambda e: save())
+    
+    def delete_group(self, group_id: str):
+        """Delete a group"""
+        group = self.simple_group.get_group(group_id)
+        if not group:
+            return
+        
+        if messagebox.askyesno("Confirm Delete", f"Delete group '{group['name']}'?\
+\
+Accounts will not be deleted."):
+            self.simple_group.delete_group(group_id)
+            self.refresh_accounts()
+            self.show_toast(f"Group '{group['name']}' deleted", "success")
+    
+    def toggle_group(self, group_id: str):
+        """Toggle expand/collapse"""
+        if group_id not in self.group_widgets:
+            return
+        
+        is_expanded = self.expanded_groups.get(group_id, True)
+        new_state = not is_expanded
+        self.expanded_groups[group_id] = new_state
+        
+        widgets = self.group_widgets[group_id]
+        body = widgets['body']
+        icon_btn = widgets['icon_btn']
+        
+        icon = "▼" if new_state else "▶"
+        icon_btn.configure(text=icon)
+        
+        if new_state:
+            if len(widgets['account_ids']) > 0:
+                body.pack(fill="x")
+                if not widgets['accounts_built']:
+                    account_count = len(widgets['account_ids'])
+                    if account_count > 30:
+                        loading_label = ctk.CTkLabel(
+                            body,
+                            text=f"Loading {account_count} accounts...",
+                            font=ctk.CTkFont(size=11),
+                            text_color=COLORS['warning']
+                        )
+                        loading_label.pack(pady=10)
+                        grouped_account_ids = set()
+                        self._build_group_accounts_lazy(group_id, widgets['account_ids'], grouped_account_ids, loading_label)
+                    else:
+                        grouped_account_ids = set()
+                        self._build_group_accounts_immediate(group_id, widgets['account_ids'], grouped_account_ids)
+                    widgets['accounts_built'] = True
+        else:
+            body.pack_forget()
+    
+    def toggle_ungrouped(self):
+        """Toggle expand/collapse ungroup"""
+        if 'ungrouped' not in self.group_widgets:
+            return
+        
+        is_expanded = self.expanded_groups.get('ungrouped', True)
+        new_state = not is_expanded
+        self.expanded_groups['ungrouped'] = new_state
+        
+        widgets = self.group_widgets['ungrouped']
+        body = widgets['body']
+        icon_btn = widgets['icon_btn']
+        
+        icon = "▼" if new_state else "▶"
+        icon_btn.configure(text=icon)
+        
+        if new_state:
+            body.pack(fill="x")
+            if not widgets['accounts_built']:
+                for account in widgets['accounts']:
+                    self.create_account_row(account, in_group=False, parent=body)
+                widgets['accounts_built'] = True
+        else:
+            body.pack_forget()
+    
+    def create_account_row(self, account: dict, in_group: bool = False, group_id: str = None, parent=None):
+        """Create row for account"""
+        if parent is None:
+            parent = self.accounts_frame
+        
+        row_frame = ctk.CTkFrame(parent, fg_color=COLORS['light'], height=35)
         row_frame.pack(fill="x", pady=1)
         row_frame.pack_propagate(False)
         
@@ -429,7 +950,7 @@ class AccountManagerGUI:
                 actions_frame,
                 text="Close",
                 command=lambda: self.close_browser(account['id']),
-                width=60,
+                width=50,
                 height=24,
                 fg_color=COLORS['warning'],
                 font=ctk.CTkFont(size=10)
@@ -439,7 +960,7 @@ class AccountManagerGUI:
                 actions_frame,
                 text="Check",
                 command=lambda: self.check_account_status(account['id']),
-                width=60,
+                width=50,
                 height=24,
                 fg_color=COLORS['primary'],
                 font=ctk.CTkFont(size=10)
@@ -449,7 +970,7 @@ class AccountManagerGUI:
                 actions_frame,
                 text="Open",
                 command=lambda: self.open_account(account['id']),
-                width=60,
+                width=50,
                 height=24,
                 fg_color=COLORS['primary'],
                 font=ctk.CTkFont(size=10)
@@ -458,7 +979,7 @@ class AccountManagerGUI:
             ctk.CTkButton(
                 actions_frame,
                 text="Check",
-                width=60,
+                width=50,
                 height=24,
                 state="disabled",
                 fg_color="gray",
@@ -474,14 +995,18 @@ class AccountManagerGUI:
             font=ctk.CTkFont(size=10)
         ).pack(side="left", padx=1)
         
-        ctk.CTkButton(
-            actions_frame,
-            text="Proxy",
-            command=lambda: self.edit_account_proxy(account['id']),
-            width=50,
-            height=24,
-            font=ctk.CTkFont(size=10)
-        ).pack(side="left", padx=1)
+        if not in_group:
+            pass
+        else:
+            ctk.CTkButton(
+                actions_frame,
+                text="Remove",
+                command=lambda: self.simple_group.remove_account_from_group(group_id, account['id']) or self.refresh_accounts(),
+                width=55,
+                height=24,
+                fg_color=COLORS['warning'],
+                font=ctk.CTkFont(size=10)
+            ).pack(side="left", padx=1)
 
         ctk.CTkButton(
             actions_frame,
@@ -598,37 +1123,55 @@ class AccountManagerGUI:
     
     def _bind_tooltip(self, widget, text: str):
         """Bind tooltip to widget"""
-        tooltip = None
         
-        def on_enter(event):
-            nonlocal tooltip
-            x, y, _, _ = widget.bbox("insert")
-            x += widget.winfo_rootx() + 25
-            y += widget.winfo_rooty() + 25
+        def show_tooltip(event):
+            if self.tooltip_timer:
+                self.root.after_cancel(self.tooltip_timer)
+                self.tooltip_timer = None
             
-            tooltip = ctk.CTkToplevel(widget)
-            tooltip.wm_overrideredirect(True)
-            tooltip.wm_geometry(f"+{x}+{y}")
+            self._hide_tooltip()
             
-            label = ctk.CTkLabel(
-                tooltip,
-                text=text,
-                justify="left",
-                fg_color=COLORS['dark'],
-                corner_radius=6,
-                padx=10,
-                pady=5
-            )
-            label.pack()
+            def create_tooltip():
+                x = widget.winfo_rootx() + event.x + 10
+                y = widget.winfo_rooty() + event.y + 10
+                
+                self.active_tooltip = ctk.CTkToplevel(self.root)
+                self.active_tooltip.wm_overrideredirect(True)
+                self.active_tooltip.wm_geometry(f"+{x}+{y}")
+                self.active_tooltip.attributes('-topmost', True)
+                
+                label = ctk.CTkLabel(
+                    self.active_tooltip,
+                    text=text,
+                    justify="left",
+                    fg_color=COLORS['dark'],
+                    corner_radius=6,
+                    padx=10,
+                    pady=5
+                )
+                label.pack()
+            
+            self.tooltip_timer = self.root.after(500, create_tooltip)
         
-        def on_leave(event):
-            nonlocal tooltip
-            if tooltip:
-                tooltip.destroy()
-                tooltip = None
+        def hide_tooltip(event):
+            if self.tooltip_timer:
+                self.root.after_cancel(self.tooltip_timer)
+                self.tooltip_timer = None
+            
+            self._hide_tooltip()
         
-        widget.bind("<Enter>", on_enter)
-        widget.bind("<Leave>", on_leave)
+        widget.bind("<Enter>", show_tooltip)
+        widget.bind("<Leave>", hide_tooltip)
+        widget.bind("<Button-1>", hide_tooltip)
+    
+    def _hide_tooltip(self):
+        """Hide active tooltip"""
+        if self.active_tooltip:
+            try:
+                self.active_tooltip.destroy()
+            except:
+                pass
+            self.active_tooltip = None
     
     def close_browser(self, account_id: str):
         """Close browser for specific account"""
