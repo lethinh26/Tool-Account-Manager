@@ -732,3 +732,287 @@ class EditAccountDialog(ctk.CTkToplevel):
         
         if self.callback(self.account['id'], updates):
             self.destroy()
+
+
+class EditAccountTabbedDialog(ctk.CTkToplevel):
+    
+    def __init__(self, parent, account: dict, proxy_manager: ProxyManager, callback: Callable):
+        super().__init__(parent)
+        self.account = account
+        self.proxy_manager = proxy_manager
+        self.callback = callback
+        
+        self.title("Edit Account")
+        self.geometry("500x550")
+        self.resizable(False, False)
+        
+        self.transient(parent)
+        self.grab_set()
+        
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() // 2) - (500 // 2)
+        y = (self.winfo_screenheight() // 2) - (550 // 2)
+        self.geometry(f'+{x}+{y}')
+        
+        self.create_widgets()
+    
+    def create_widgets(self):
+        header = ctk.CTkLabel(
+            self,
+            text="Edit Account",
+            font=ctk.CTkFont(size=20, weight="bold")
+        )
+        header.pack(pady=20)
+        
+        self.tabview = ctk.CTkTabview(self, width=460, height=380)
+        self.tabview.pack(padx=20, pady=10, fill="both", expand=True)
+        
+        self.tabview.add("Account")
+        self.tabview.add("Proxy")
+        
+        self.create_account_tab()
+        
+        self.create_proxy_tab()
+        
+        button_frame = ctk.CTkFrame(self, fg_color="transparent")
+        button_frame.pack(fill="x", padx=20, pady=20)
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Save",
+            command=self.save_changes,
+            fg_color=COLORS['success'],
+            hover_color="#25a56f",
+            width=200
+        ).pack(side="left", expand=True, padx=10)
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Cancel",
+            command=self.destroy,
+            fg_color=COLORS['danger'],
+            hover_color="#c0392b",
+            width=200
+        ).pack(side="left", expand=True, padx=10)
+    
+    def create_account_tab(self):
+        """Create account info tab"""
+        tab = self.tabview.tab("Account")
+        
+        ctk.CTkLabel(tab, text="Account Name:", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", padx=20, pady=(10, 5))
+        self.name_entry = ctk.CTkEntry(tab, width=400, placeholder_text="Enter account name")
+        self.name_entry.pack(padx=20, pady=5)
+        if self.account.get('name'):
+            self.name_entry.insert(0, self.account['name'])
+        
+        ctk.CTkLabel(tab, text="Email:", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", padx=20, pady=(10, 5))
+        self.email_entry = ctk.CTkEntry(tab, width=400, placeholder_text="Enter email")
+        self.email_entry.pack(padx=20, pady=5)
+        if self.account.get('email'):
+            self.email_entry.insert(0, self.account['email'])
+        
+        ctk.CTkLabel(tab, text="Notes:", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", padx=20, pady=(10, 5))
+        self.notes_text = ctk.CTkTextbox(tab, width=400, height=120)
+        self.notes_text.pack(padx=20, pady=5)
+        if self.account.get('notes'):
+            self.notes_text.insert("1.0", self.account['notes'])
+    
+    def create_proxy_tab(self):
+        """Create proxy settings tab"""
+        tab = self.tabview.tab("Proxy")
+        
+        self.use_proxy_var = ctk.BooleanVar(value=self.account.get('use_proxy', False))
+        proxy_check = ctk.CTkCheckBox(
+            tab,
+            text="Use proxy for this account",
+            variable=self.use_proxy_var,
+            command=self.update_proxy_states,
+            font=ctk.CTkFont(size=13, weight="bold")
+        )
+        proxy_check.pack(anchor="w", padx=20, pady=20)
+        
+        self.proxy_mode_var = ctk.StringVar(value=self.account.get('proxy_mode') or "random")
+        
+        mode_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        mode_frame.pack(fill="x", padx=20, pady=10)
+        
+        self.mode_buttons = []
+        random_button = ctk.CTkRadioButton(
+            mode_frame,
+            text="Random proxy (choose random alive proxy when opening)",
+            variable=self.proxy_mode_var,
+            value="random",
+            command=self.update_proxy_states,
+            font=ctk.CTkFont(size=12)
+        )
+        random_button.pack(anchor="w", pady=5)
+        self.mode_buttons.append(random_button)
+        
+        specific_button = ctk.CTkRadioButton(
+            mode_frame,
+            text="Specific proxy (always use this proxy):",
+            variable=self.proxy_mode_var,
+            value="specific",
+            command=self.update_proxy_states,
+            font=ctk.CTkFont(size=12)
+        )
+        specific_button.pack(anchor="w", pady=5)
+        self.mode_buttons.append(specific_button)
+        
+        proxies = self.proxy_manager.get_all_proxies()
+        self.has_proxy_options = len(proxies) > 0
+        if self.has_proxy_options:
+            self.proxy_values = [f"{i}: {p['host']}:{p['port']}" for i, p in enumerate(proxies)]
+        else:
+            self.proxy_values = ["No proxies available"]
+        
+        self.proxy_dropdown = ctk.CTkOptionMenu(
+            tab,
+            values=self.proxy_values,
+            width=400
+        )
+        self.proxy_dropdown.pack(padx=20, pady=10)
+        
+        default_option = None
+        proxy_id = self.account.get('proxy_id')
+        if proxy_id is not None and self.has_proxy_options:
+            try:
+                idx = int(proxy_id)
+                if 0 <= idx < len(self.proxy_values):
+                    default_option = self.proxy_values[idx]
+            except (ValueError, TypeError):
+                default_option = None
+        
+        if default_option:
+            self.proxy_dropdown.set(default_option)
+        else:
+            self.proxy_dropdown.set(self.proxy_values[0])
+        
+        self.update_proxy_states()
+    
+    def update_proxy_states(self):
+        """Update proxy widget states based on selections"""
+        use_proxy = self.use_proxy_var.get()
+        for btn in self.mode_buttons:
+            btn.configure(state="normal" if use_proxy else "disabled")
+        
+        dropdown_state = "normal" if (use_proxy and self.proxy_mode_var.get() == "specific" and self.has_proxy_options) else "disabled"
+        self.proxy_dropdown.configure(state=dropdown_state)
+    
+    def save_changes(self):
+        """Save all changes from both tabs"""
+        name = self.name_entry.get().strip()
+        email = self.email_entry.get().strip()
+        notes = self.notes_text.get("1.0", "end-1c").strip()
+        
+        if not name:
+            messagebox.showwarning("Warning", "Please enter an account name!")
+            return
+        
+        use_proxy = self.use_proxy_var.get()
+        proxy_mode = self.proxy_mode_var.get() if use_proxy else None
+        proxy_id = None
+        
+        if use_proxy and proxy_mode == "specific":
+            selection = self.proxy_dropdown.get()
+            if not self.has_proxy_options or selection == "No proxies available":
+                messagebox.showwarning("Warning", "No proxies available to select!")
+                return
+            proxy_id = selection.split(":")[0]
+        
+        updates = {
+            'name': name,
+            'notes': notes,
+            'use_proxy': use_proxy,
+            'proxy_mode': proxy_mode,
+            'proxy_id': proxy_id
+        }
+        
+        if email:
+            updates['email'] = email
+        
+        if self.callback(self.account['id'], updates):
+            self.destroy()
+
+
+class RemoveAccountDialog(ctk.CTkToplevel):
+    """Dialog for choosing between Ungroup or Delete account"""
+    
+    def __init__(self, parent, account_id: str, group_id: str):
+        super().__init__(parent)
+        self.account_id = account_id
+        self.group_id = group_id
+        self.result = None
+        
+        self.title("Remove Account")
+        self.geometry("400x220")
+        self.resizable(False, False)
+        
+        self.transient(parent)
+        self.grab_set()
+        
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() // 2) - (400 // 2)
+        y = (self.winfo_screenheight() // 2) - (220 // 2)
+        self.geometry(f'+{x}+{y}')
+        
+        self.create_widgets()
+    
+    def create_widgets(self):
+        header = ctk.CTkLabel(
+            self,
+            text="What would you like to do?",
+            font=ctk.CTkFont(size=18, weight="bold")
+        )
+        header.pack(pady=30)
+        
+        info = ctk.CTkLabel(
+            self,
+            text="This account is in a group.",
+            font=ctk.CTkFont(size=13)
+        )
+        info.pack(pady=5)
+        
+        button_frame = ctk.CTkFrame(self, fg_color="transparent")
+        button_frame.pack(pady=30)
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Remove from Group Only",
+            command=self.ungroup_account,
+            fg_color=COLORS['warning'],
+            hover_color="#e67e22",
+            width=180,
+            height=40,
+            font=ctk.CTkFont(size=13)
+        ).pack(side="left", padx=10)
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Delete Account",
+            command=self.delete_account,
+            fg_color=COLORS['danger'],
+            hover_color="#c0392b",
+            width=180,
+            height=40,
+            font=ctk.CTkFont(size=13)
+        ).pack(side="left", padx=10)
+        
+        ctk.CTkButton(
+            self,
+            text="Cancel",
+            command=self.destroy,
+            fg_color="gray",
+            width=100
+        ).pack(pady=10)
+    
+    def ungroup_account(self):
+        """Remove from group only"""
+        self.result = "ungroup"
+        self.destroy()
+    
+    def delete_account(self):
+        """Delete account permanently"""
+        if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this account permanently?"):
+            self.result = "delete"
+            self.destroy()

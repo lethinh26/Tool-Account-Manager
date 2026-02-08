@@ -941,26 +941,23 @@ Accounts will not be deleted."):
         proxy_text = "Yes" if account['use_proxy'] else "No"
         ctk.CTkLabel(row_frame, text=proxy_text, width=80, anchor="w", font=ctk.CTkFont(size=12)).pack(side="left", padx=2)
         
-        actions_frame = ctk.CTkFrame(row_frame, fg_color="transparent", width=280)
+        row_frame.bind("<Double-Button-1>", lambda e: self.open_account(account['id']))
+        for widget in row_frame.winfo_children():
+            if isinstance(widget, ctk.CTkLabel):
+                widget.bind("<Double-Button-1>", lambda e: self.open_account(account['id']))
+        
+        actions_frame = ctk.CTkFrame(row_frame, fg_color="transparent", width=200)
         actions_frame.pack(side="left", padx=2)
         actions_frame.pack_propagate(False)
         
+
+        browser_open = self.browser_manager.is_browser_open(account['id'])
         if browser_open:
-            ctk.CTkButton(
-                actions_frame,
-                text="Close",
-                command=lambda: self.close_browser(account['id']),
-                width=50,
-                height=24,
-                fg_color=COLORS['warning'],
-                font=ctk.CTkFont(size=10)
-            ).pack(side="left", padx=1)
-            
             ctk.CTkButton(
                 actions_frame,
                 text="Check",
                 command=lambda: self.check_account_status(account['id']),
-                width=50,
+                width=60,
                 height=24,
                 fg_color=COLORS['primary'],
                 font=ctk.CTkFont(size=10)
@@ -968,18 +965,8 @@ Accounts will not be deleted."):
         else:
             ctk.CTkButton(
                 actions_frame,
-                text="Open",
-                command=lambda: self.open_account(account['id']),
-                width=50,
-                height=24,
-                fg_color=COLORS['primary'],
-                font=ctk.CTkFont(size=10)
-            ).pack(side="left", padx=1)
-            
-            ctk.CTkButton(
-                actions_frame,
                 text="Check",
-                width=50,
+                width=60,
                 height=24,
                 state="disabled",
                 fg_color="gray",
@@ -989,32 +976,19 @@ Accounts will not be deleted."):
         ctk.CTkButton(
             actions_frame,
             text="Edit",
-            command=lambda: self.edit_account_dialog(account['id']),
-            width=50,
+            command=lambda: self.edit_account_tabbed_dialog(account['id']),
+            width=60,
             height=24,
             font=ctk.CTkFont(size=10)
         ).pack(side="left", padx=1)
         
-        if not in_group:
-            pass
-        else:
-            ctk.CTkButton(
-                actions_frame,
-                text="Remove",
-                command=lambda: self.simple_group.remove_account_from_group(group_id, account['id']) or self.refresh_accounts(),
-                width=55,
-                height=24,
-                fg_color=COLORS['warning'],
-                font=ctk.CTkFont(size=10)
-            ).pack(side="left", padx=1)
-
         ctk.CTkButton(
             actions_frame,
-            text="Delete",
-            command=lambda: self.delete_account(account['id']),
-            width=50,
+            text="Remove",
+            command=lambda: self.remove_account_smart(account['id'], in_group, group_id),
+            width=70,
             height=24,
-            fg_color=COLORS['danger'],
+            fg_color=COLORS['warning'] if in_group else COLORS['danger'],
             font=ctk.CTkFont(size=10)
         ).pack(side="left", padx=1)
     
@@ -1299,6 +1273,16 @@ Accounts will not be deleted."):
         from src.gui.dialogs import EditAccountDialog
         dialog = EditAccountDialog(self.root, account, self.on_account_edited)
     
+    def edit_account_tabbed_dialog(self, account_id: str):
+        """Show tabbed dialog to edit account info and proxy settings"""
+        account = self.account_manager.get_account(account_id)
+        if not account:
+            messagebox.showerror("Error", "Account not found!")
+            return
+        
+        from src.gui.dialogs import EditAccountTabbedDialog
+        dialog = EditAccountTabbedDialog(self.root, account, self.proxy_manager, self.on_account_edited)
+    
     def on_account_edited(self, account_id: str, updates: dict) -> bool:
         """Handle account edits from dialog"""
         if self.account_manager.update_account(account_id, **updates):
@@ -1426,6 +1410,27 @@ Accounts will not be deleted."):
             if self.account_manager.remove_account(account_id):
                 self.show_toast("Account deleted successfully", "success")
                 self.refresh_accounts()
+    
+    def remove_account_smart(self, account_id: str, in_group: bool, group_id: str = None):
+        """Ungroup or Delete based on context"""
+        if in_group and group_id:
+            from src.gui.dialogs import RemoveAccountDialog
+            dialog = RemoveAccountDialog(self.root, account_id, group_id)
+            self.root.wait_window(dialog)
+            
+            if dialog.result == "ungroup":
+                self.simple_group.remove_account_from_group(group_id, account_id)
+                self.show_toast("Account removed from group", "success")
+                self.refresh_accounts()
+            elif dialog.result == "delete":
+                if self.account_manager.remove_account(account_id):
+                    self.show_toast("Account deleted successfully", "success")
+                    self.refresh_accounts()
+        else:
+            if messagebox.askyesno("Confirm Delete", "Delete this account permanently?"):
+                if self.account_manager.remove_account(account_id):
+                    self.show_toast("Account deleted successfully", "success")
+                    self.refresh_accounts()
     
     def edit_account_proxy(self, account_id: str):
         """Edit proxy settings specific account"""
