@@ -5,6 +5,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 import os
 import shutil
 import logging
+import random
+import re
 from pathlib import Path
 from typing import Optional, Dict
 from src.config import CHROME_OPTIONS
@@ -15,7 +17,203 @@ class BrowserManager:
     def __init__(self):
         self.drivers = {} 
         self.local_proxy_manager = LocalProxyManager()
-        self._cached_driver_path = None 
+        self._cached_driver_path = None
+    
+    def _get_chrome_version(self):
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Google\Chrome\BLBeacon")
+            version, _ = winreg.QueryValueEx(key, "version")
+            return version
+        except:
+            try:
+                import winreg
+                key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Google\Chrome\BLBeacon")
+                version, _ = winreg.QueryValueEx(key, "version")
+                return version
+            except:
+                return "120.0.6099.109"
+    
+    def _get_stealth_user_agent(self):
+        chrome_version = self._get_chrome_version()
+        major_version = chrome_version.split('.')[0]
+        return f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version} Safari/537.36"
+    
+    def _get_stealth_scripts(self):
+        return """
+// MARKER: Script applied
+window.__stealth_applied = true;
+
+// FIX #1: Remove webdriver COMPLETELY (don't redefine)
+try { delete Object.getPrototypeOf(navigator).webdriver; } catch(e) {}
+try { delete navigator.webdriver; } catch(e) {}
+
+// FIX #2: Real PluginArray - simplified approach
+try {
+  const pluginData = [
+    {name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 2},
+    {name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1},
+    {name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1},
+    {name: 'Microsoft Edge PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 2},
+    {name: 'WebKit built-in PDF', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 2}
+  ];
+  
+  // Use Object.setPrototypeOf for better compatibility
+  Object.setPrototypeOf(pluginData, PluginArray.prototype);
+  
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => pluginData,
+    enumerable: true,
+    configurable: true
+  });
+} catch(e) {}
+
+// FIX #2.5: MimeTypeArray - simplified
+try {
+  const mimeData = [
+    {type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format'},
+    {type: 'text/pdf', suffixes: 'pdf', description: 'Portable Document Format'}
+  ];
+  Object.setPrototypeOf(mimeData, MimeTypeArray.prototype);
+  Object.defineProperty(navigator, 'mimeTypes', {
+    get: () => mimeData,
+    enumerable: true,
+    configurable: true
+  });
+} catch(e) {}
+
+// FIX #3: WebGL real GPU
+try {
+  const gp = WebGLRenderingContext.prototype.getParameter;
+  WebGLRenderingContext.prototype.getParameter = function(p) {
+    if (p === 37445) return 'Google Inc. (NVIDIA)';
+    if (p === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0)';
+    return gp.apply(this, arguments);
+  };
+} catch(e) {}
+try {
+  const gp2 = WebGL2RenderingContext.prototype.getParameter;
+  WebGL2RenderingContext.prototype.getParameter = function(p) {
+    if (p === 37445) return 'Google Inc. (NVIDIA)';
+    if (p === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0)';
+    return gp2.apply(this, arguments);
+  };
+} catch(e) {}
+
+// FIX #4: Permissions
+try {
+  if (window.navigator.permissions) {
+    const oq = window.navigator.permissions.query;
+    window.navigator.permissions.query = (params) => {
+      if (params.name === 'notifications' || params.name === 'geolocation') {
+        return Promise.resolve({state: 'prompt'});
+      }
+      return oq(params);
+    };
+  }
+} catch(e) {}
+
+// FIX #5: Screen dimensions
+try {
+  Object.defineProperty(window, 'outerWidth', {get: () => window.innerWidth || 1920});
+  Object.defineProperty(window, 'outerHeight', {get: () => (window.innerHeight || 1080) + 85});
+} catch(e) {}
+
+// FIX #6: Chrome object complete
+try {
+  if (!window.chrome) window.chrome = {};
+  
+  window.chrome.runtime = {
+    connect: function connect() {
+      return {
+        onMessage: {addListener: function(){}},
+        onDisconnect: {addListener: function(){}},
+        postMessage: function(){},
+        disconnect: function(){}
+      };
+    },
+    sendMessage: function sendMessage(){},
+    onMessage: {addListener: function(){}},
+    onConnect: {addListener: function(){}},
+    id: 'aegokocmijocdgiddgjbjkdfigiijhkg',
+    getManifest: function getManifest() {return {name: 'Chrome Extension', version: '1.0.0'};},
+    getURL: function getURL(path) {return 'chrome-extension://aegokocmijocdgiddgjbjkdfigiijhkg/' + path;}
+  };
+  
+  if (!window.chrome.webstore) {
+    window.chrome.webstore = {
+      install: function install(){},
+      onInstallStageChanged: {},
+      onDownloadProgress: {}
+    };
+  }
+  
+  if (!window.chrome.app) {
+    window.chrome.app = {
+      isInstalled: false,
+      InstallState: {DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed'},
+      RunningState: {CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running'},
+      getDetails: function getDetails() {return null;},
+      installState: function installState() {return 'not_installed';},
+      runningState: function runningState() {return 'cannot_run';}
+    };
+  }
+  
+  if (!window.chrome.csi) {
+    window.chrome.csi = function csi() {
+      return {startE: Date.now(), onloadT: Date.now(), pageT: Math.random()*1000, tran: 15};
+    };
+  }
+  
+  if (!window.chrome.loadTimes) {
+    window.chrome.loadTimes = function loadTimes() {
+      const t = Date.now()/1000;
+      return {
+        requestTime: t, startLoadTime: t, commitLoadTime: t,
+        finishDocumentLoadTime: t, finishLoadTime: t, firstPaintTime: t,
+        firstPaintAfterLoadTime: 0, navigationType: 'Other',
+        wasFetchedViaSpdy: false, wasNpnNegotiated: true,
+        npnNegotiatedProtocol: 'h2', wasAlternateProtocolAvailable: false,
+        connectionInfo: 'h2'
+      };
+    };
+  }
+} catch(e) {}
+
+// FIX #7: Remove CDC variables
+try {
+  ['cdc_adoQpoasnfa76pfcZLmcfl_Array', 'cdc_adoQpoasnfa76pfcZLmcfl_Promise', 
+   'cdc_adoQpoasnfa76pfcZLmcfl_Symbol', 'cdc_adoQpoasnfa76pfcZLmcfl_Object',
+   'cdc_adoQpoasnfa76pfcZLmcfl_Proxy'].forEach(function(v) {
+    try {delete window[v];} catch(e) {}
+    try {
+      Object.defineProperty(window, v, {
+        get: () => undefined,
+        set: () => {},
+        enumerable: false,
+        configurable: true
+      });
+    } catch(e) {}
+  });
+} catch(e) {}
+
+// Additional protections
+try {
+  Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+} catch(e) {}
+
+console.log('[Stealth] Anti-detect applied');
+"""
+    
+    def _get_random_viewport(self):
+        common_resolutions = [
+            (1920, 1080),
+            (1366, 768),
+            (1536, 864),
+            (1440, 900),
+            (1280, 720)
+        ]
+        return random.choice(common_resolutions) 
     
     def create_browser(self, account_id: str, profile_path: str, 
                       proxy: Optional[Dict] = None) -> webdriver.Chrome:
@@ -34,6 +232,26 @@ class BrowserManager:
             
             for option in CHROME_OPTIONS:
                 chrome_options.add_argument(option)
+            
+            user_agent = self._get_stealth_user_agent()
+            chrome_options.add_argument(f"--user-agent={user_agent}")
+            
+            chrome_options.add_argument("--lang=en-US,en")
+            chrome_options.add_argument("--accept-lang=en-US,en;q=0.9")
+            
+            width, height = self._get_random_viewport()
+            chrome_options.add_argument(f"--window-size={width},{height}")
+            
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_argument("--disable-site-isolation-trials")
+            
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            
+            chrome_options.add_experimental_option("prefs", {
+                "intl.accept_languages": "en-US,en",
+                "profile.default_content_setting_values.notifications": 1  # 1=ask, 2=block
+            })
             
             if proxy:
                 print(f"Setting up proxy route: {proxy['protocol']}://{proxy['host']}:{proxy['port']}")
@@ -65,9 +283,6 @@ class BrowserManager:
             else:
                 print("No proxy configured for this account")
             
-            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            chrome_options.add_experimental_option('useAutomationExtension', False)
-            
             try:
                 driver_path = self._get_driver_path()
                 log_path = profile_dir.joinpath("chromedriver.log")
@@ -91,18 +306,37 @@ class BrowserManager:
                         f"Error: {str(chrome_error)}"
                     )
             
-            stealth_script = """
-Object.defineProperty(Object.getPrototypeOf(navigator), 'webdriver', {
-  get: () => undefined
-});
-"""
+            stealth_script = self._get_stealth_scripts()
             try:
                 driver.execute_cdp_cmd(
                     "Page.addScriptToEvaluateOnNewDocument",
                     {"source": stealth_script}
                 )
+                print("✓ Anti-detect scripts applied")
             except Exception as e:
-                print(f"Warning: unable to tweak navigator.webdriver ({e})")
+                print(f"Warning: unable to apply stealth scripts ({e})")
+            
+            try:
+                driver.execute_script(stealth_script)
+                print("✓ Stealth script executed immediately")
+            except Exception as script_error:
+                print(f"⚠️  Warning: Failed to execute script immediately: {script_error}")
+            
+            try:
+                driver.execute_cdp_cmd("Emulation.setTimezoneOverride", {"timezoneId": "America/New_York"})
+            except:
+                pass
+            
+            width, height = self._get_random_viewport()
+            try:
+                driver.execute_cdp_cmd("Emulation.setDeviceMetricsOverride", {
+                    "width": width,
+                    "height": height,
+                    "deviceScaleFactor": 1,
+                    "mobile": False
+                })
+            except:
+                pass
             
             self.drivers[account_id] = driver
             

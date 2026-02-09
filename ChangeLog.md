@@ -1,3 +1,57 @@
+# v2.1.0 - Advanced Proxy Intelligence (Enhanced)
+- **IP2Location API Integration**: 
+  - Two-tier proxy checking system (Live/Advanced)
+  - Comprehensive fraud score analysis (0-100 scale with detailed recommendations)
+  - Multi-layered proxy detection (VPN, TOR, datacenter, public proxy, botnet, spammer, scanner, etc.)
+  
+- **Enhanced Risk Assessment**:
+  - **0-20**: ✅ Clean IP - Safe to use, no suspicious activity
+  - **21-40**: ⚠️ Light Suspicious - Light suspicion, monitor before critical use
+  - **41-60**: ⚠️ Risky IP - Monitor Required - Multiple red flags, not recommended for important tasks
+  - **61-80**: 🔴 Dangerous - EXTREMELY RISKY! History of malicious activity
+  - **81-100**: 🔴 Very Bad - VERY DANGEROUS! Blacklisted, spam/attack history
+  - English recommendations for each risk level
+
+- **Comprehensive Information Display**:
+  - **Visual Fraud Score**: Color-coded progress bar with large score display
+  - **Security Analysis**: Detailed breakdown of all security issues with severity indicators
+  - **Positive Characteristics**: Highlights good aspects (e.g., residential proxy)
+  - **Location Information**: IP, country, region, city, ZIP, coordinates, timezone
+  - **Network Information**: ISP, domain, AS number/name, usage type, connection speed
+  - **Proxy Characteristics**: Proxy type, threat level, provider, last seen, country threat
+  - **Raw API Response**: Collapsible JSON viewer for complete API data
+
+- **Advanced Dialog Features**:
+  - Large scrollable window (900x700) for comprehensive data display
+  - Organized sections with icons (🔍🛡️🌍🌐🔧)
+  - Copy to Clipboard: Export full analysis report
+  - Timestamp tracking for each advanced check
+  - Color-coded risk levels matching fraud score
+  - Detailed English explanations for all detections
+
+- **Code Quality Improvements**:
+  - All text converted to English
+  - Removed all comments and docstrings for cleaner code
+  - Improved code readability and maintainability
+
+- **API Key Management**:
+  - First-time prompt with persistent storage in `data/config.json`
+  - ConfigManager class for configuration persistence
+  - Free API key: https://www.ip2location.io/
+
+- **Enhanced UI**:
+  - `Check Advanced` button in toolbar (purple theme #9b59b6)
+  - `Advanced` button per proxy row (75px width)
+  - Professional result dialog with modern design
+  - Toast notifications for API key saves
+
+- **Technical Improvements**:
+  - Enhanced `analyze_ip2location_result()` with 10+ data categories
+  - Thread-safe concurrent API calls with progress tracking
+  - Graceful error handling with fallback to basic check
+  - Extended proxy data structure with comprehensive `advanced_check` metadata
+  - Efficient JSON serialization for clipboard export
+
 # v2.0.0 - Advanced Features Release
 - **Custom Exceptions**: Unified error handling with specific exception types
 - **Event System**: Pub/Sub pattern for decoupled component communication

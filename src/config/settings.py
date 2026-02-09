@@ -11,13 +11,16 @@ os.makedirs(PROXY_DIR, exist_ok=True)
 
 ACCOUNTS_FILE = os.path.join(DATA_DIR, "accounts.json")
 PROXIES_FILE = os.path.join(DATA_DIR, "proxies.json")
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 
 CHROME_OPTIONS = [
-    "--disable-blink-features=AutomationControlled",
     "--disable-dev-shm-usage",
     "--no-sandbox",
-    "--disable-gpu",
-    "--window-size=1280,800"
+    "--disable-setuid-sandbox",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-logging",
+    "--log-level=3"
 ]
 
 WINDOW_SIZE = "1400x800"

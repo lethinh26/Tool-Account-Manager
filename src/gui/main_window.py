@@ -6,6 +6,7 @@ import os
 from typing import Optional, List
 from datetime import datetime
 from src.core import AccountManager, ProxyManager, BrowserManager
+from src.core.config_manager import ConfigManager
 from src.core.simple_group import SimpleGroupManager
 from src.config import WINDOW_SIZE, THEME, COLORS, DATA_DIR
 
@@ -18,6 +19,7 @@ class AccountManagerGUI:
         self.account_manager = AccountManager()
         self.proxy_manager = ProxyManager()
         self.browser_manager = BrowserManager()
+        self.config_manager = ConfigManager()
         self.simple_group = SimpleGroupManager(DATA_DIR)
         
         self.root = ctk.CTk()
@@ -37,6 +39,8 @@ class AccountManagerGUI:
         self.expanded_groups = {}
         self.group_widgets = {}
         self.loading_tasks = {}
+        self._active_dialog = None
+        self._checking_advanced_proxy = False
         
         self.setup_error_logger()
         
@@ -45,6 +49,30 @@ class AccountManagerGUI:
         self.refresh_accounts()
         self.refresh_proxies()
         self.update_stats()
+    
+    def _can_open_dialog(self) -> bool:
+        if self._active_dialog is not None:
+            try:
+                if self._active_dialog.winfo_exists():
+                    self._active_dialog.lift()
+                    self._active_dialog.focus_force()
+                    self.show_toast("Please close the current dialog first", "warning")
+                    return False
+                else:
+                    self._active_dialog = None
+            except:
+                self._active_dialog = None
+        return True
+    
+    def _register_dialog(self, dialog):
+        self._active_dialog = dialog
+        dialog.protocol("WM_DELETE_WINDOW", lambda: self._close_dialog(dialog))
+    
+    def _close_dialog(self, dialog):
+        self._active_dialog = None
+        if hasattr(self, '_checking_advanced_proxy'):
+            self._checking_advanced_proxy = False
+        dialog.destroy()
     
     def setup_error_logger(self):
         log_dir = os.path.join(DATA_DIR, "logs", "errors")
@@ -68,7 +96,7 @@ class AccountManagerGUI:
         self.error_logger.addHandler(file_handler)
     
     def setup_account_logger(self, account_id: str, account_name: str) -> logging.Logger:
-        """Setup logger for specific account"""
+
         log_dir = os.path.join(DATA_DIR, "logs")
         os.makedirs(log_dir, exist_ok=True)
         
@@ -144,7 +172,6 @@ class AccountManagerGUI:
         self.setup_logs_tab()
     
     def setup_accounts_tab(self):
-        """Setup accounts tab with Treeview"""
 
         stats_frame = ctk.CTkFrame(self.tab_accounts, corner_radius=12, fg_color=COLORS['light'])
         stats_frame.pack(fill="x", padx=10, pady=10)
@@ -248,7 +275,7 @@ class AccountManagerGUI:
         self.logs_notebook.pack(fill="both", expand=True, padx=10, pady=10)
     
     def setup_proxies_tab(self):
-        """Setup proxies tab"""
+
         toolbar_frame = ctk.CTkFrame(self.tab_proxies, corner_radius=12, fg_color=COLORS['light'])
         toolbar_frame.pack(fill="x", padx=10, pady=10)
         
@@ -276,6 +303,15 @@ class AccountManagerGUI:
             fg_color=COLORS['warning'],
             hover_color="#d68910",
             width=120
+        ).pack(side="left", padx=5)
+        
+        ctk.CTkButton(
+            toolbar_frame,
+            text="Check Advanced",
+            command=self.check_all_proxies_advanced,
+            fg_color="#9b59b6",
+            hover_color="#8e44ad",
+            width=130
         ).pack(side="left", padx=5)
         
         ctk.CTkButton(
@@ -318,6 +354,7 @@ class AccountManagerGUI:
             ("Status", 80),
             ("Response (ms)", 100),
             ("Last Check", 130),
+            ("Fraud Score", 100),
             ("Actions", 60)
         ]
         
@@ -332,7 +369,7 @@ class AccountManagerGUI:
             label.pack(side="left", padx=2, pady=7)
     
     def create_header(self):
-        """Top hero header for app branding"""
+
         header = ctk.CTkFrame(self.root, corner_radius=14, fg_color=COLORS['light'])
         header.pack(fill="x", padx=10, pady=(10, 0))
         
@@ -357,11 +394,11 @@ class AccountManagerGUI:
         subtitle.pack(side="left", padx=8)
             
     def change_appearance(self, mode: str):
-        """Change appearance mode"""
+
         ctk.set_appearance_mode(mode.lower())
     
     def refresh_accounts(self):
-        """Refresh accounts display groups"""
+
         for task_id in list(self.loading_tasks.keys()):
             try:
                 self.root.after_cancel(self.loading_tasks[task_id])
@@ -544,7 +581,7 @@ class AccountManagerGUI:
         self.update_stats()
     
     def _build_group_accounts_immediate(self, group_id: str, account_ids: list, grouped_account_ids: set):
-        """Build all accounts immediately group"""
+
         if group_id not in self.group_widgets:
             return
         
@@ -556,7 +593,7 @@ class AccountManagerGUI:
                 grouped_account_ids.add(account_id)
     
     def _build_group_accounts_lazy(self, group_id: str, account_ids: list, grouped_account_ids: set, loading_label=None):
-        """Build accounts in chunks"""
+
         if group_id not in self.group_widgets:
             return
         
@@ -589,12 +626,15 @@ class AccountManagerGUI:
         build_chunk(0)
     
     def create_group_dialog(self):
-        """Dialog new group"""
+        if not self._can_open_dialog():
+            return
+
         dialog = ctk.CTkToplevel(self.root)
         dialog.title("Create Group")
         dialog.geometry("400x200")
         dialog.transient(self.root)
         dialog.grab_set()
+        self._register_dialog(dialog)
         
         ctk.CTkLabel(dialog, text="Enter Group Name:", font=self.font_h2).pack(pady=20)
         
@@ -608,7 +648,7 @@ class AccountManagerGUI:
                 self.simple_group.create_group(name)
                 self.refresh_accounts()
                 self.show_toast(f"Group '{name}' created", "success")
-                dialog.destroy()
+                self._close_dialog(dialog)
             else:
                 messagebox.showwarning("Invalid Input", "Please enter a group name")
         
@@ -616,12 +656,14 @@ class AccountManagerGUI:
         button_frame.pack(pady=20)
         
         ctk.CTkButton(button_frame, text="Create", command=create, fg_color=COLORS['success'], width=120).pack(side="left", padx=5)
-        ctk.CTkButton(button_frame, text="Cancel", command=dialog.destroy, width=120).pack(side="left", padx=5)
+        ctk.CTkButton(button_frame, text="Cancel", command=lambda: self._close_dialog(dialog), width=120).pack(side="left", padx=5)
         
         dialog.bind('<Return>', lambda e: create())
     
     def add_accounts_to_group_dialog(self, group_id: str):
-        """Dialog to add account group"""
+        if not self._can_open_dialog():
+            return
+
         group = self.simple_group.get_group(group_id)
         if not group:
             return
@@ -643,6 +685,7 @@ class AccountManagerGUI:
         dialog.geometry("500x400")
         dialog.transient(self.root)
         dialog.grab_set()
+        self._register_dialog(dialog)
         
         ctk.CTkLabel(
             dialog,
@@ -693,7 +736,7 @@ class AccountManagerGUI:
             
             self.refresh_accounts()
             self.show_toast(f"Added {len(selected_ids)} account(s) to '{group['name']}'", "success")
-            dialog.destroy()
+            self._close_dialog(dialog)
         
         ctk.CTkButton(
             button_frame,
@@ -720,12 +763,14 @@ class AccountManagerGUI:
         ctk.CTkButton(
             button_frame,
             text="Cancel",
-            command=dialog.destroy,
+            command=lambda: self._close_dialog(dialog),
             width=100
         ).pack(side="left", padx=5)
     
     def remove_from_group_dialog(self, account_id: str):
-        """Dialog remove account group"""
+        if not self._can_open_dialog():
+            return
+
         group_ids = self.simple_group.get_account_groups(account_id)
         
         if not group_ids:
@@ -736,6 +781,7 @@ class AccountManagerGUI:
         dialog.geometry("400x300")
         dialog.transient(self.root)
         dialog.grab_set()
+        self._register_dialog(dialog)
         
         ctk.CTkLabel(dialog, text="Select Group to Remove From:", font=self.font_h2).pack(pady=20)
         
@@ -758,7 +804,7 @@ class AccountManagerGUI:
                 self.refresh_accounts()
                 group_name = self.simple_group.get_group(group_id)['name']
                 self.show_toast(f"Account removed from '{group_name}'", "success")
-                dialog.destroy()
+                self._close_dialog(dialog)
             else:
                 messagebox.showwarning("No Selection", "Please select a group")
         
@@ -766,10 +812,12 @@ class AccountManagerGUI:
         button_frame.pack(pady=20)
         
         ctk.CTkButton(button_frame, text="Remove", command=remove, fg_color=COLORS['danger'], width=120).pack(side="left", padx=5)
-        ctk.CTkButton(button_frame, text="Cancel", command=dialog.destroy, width=120).pack(side="left", padx=5)
+        ctk.CTkButton(button_frame, text="Cancel", command=lambda: self._close_dialog(dialog), width=120).pack(side="left", padx=5)
     
     def edit_group_name(self, group_id: str):
-        """Dialog edit group name"""
+        if not self._can_open_dialog():
+            return
+
         group = self.simple_group.get_group(group_id)
         if not group:
             return
@@ -779,6 +827,7 @@ class AccountManagerGUI:
         dialog.geometry("400x200")
         dialog.transient(self.root)
         dialog.grab_set()
+        self._register_dialog(dialog)
         
         ctk.CTkLabel(dialog, text="Enter New Name:", font=self.font_h2).pack(pady=20)
         
@@ -794,7 +843,7 @@ class AccountManagerGUI:
                 self.simple_group.rename_group(group_id, new_name)
                 self.refresh_accounts()
                 self.show_toast(f"Group renamed to '{new_name}'", "success")
-                dialog.destroy()
+                self._close_dialog(dialog)
             else:
                 messagebox.showwarning("Invalid Input", "Please enter a group name")
         
@@ -802,12 +851,12 @@ class AccountManagerGUI:
         button_frame.pack(pady=20)
         
         ctk.CTkButton(button_frame, text="Save", command=save, fg_color=COLORS['success'], width=120).pack(side="left", padx=5)
-        ctk.CTkButton(button_frame, text="Cancel", command=dialog.destroy, width=120).pack(side="left", padx=5)
+        ctk.CTkButton(button_frame, text="Cancel", command=lambda: self._close_dialog(dialog), width=120).pack(side="left", padx=5)
         
         dialog.bind('<Return>', lambda e: save())
     
     def delete_group(self, group_id: str):
-        """Delete a group"""
+
         group = self.simple_group.get_group(group_id)
         if not group:
             return
@@ -820,7 +869,7 @@ Accounts will not be deleted."):
             self.show_toast(f"Group '{group['name']}' deleted", "success")
     
     def toggle_group(self, group_id: str):
-        """Toggle expand/collapse"""
+
         if group_id not in self.group_widgets:
             return
         
@@ -858,7 +907,7 @@ Accounts will not be deleted."):
             body.pack_forget()
     
     def toggle_ungrouped(self):
-        """Toggle expand/collapse ungroup"""
+
         if 'ungrouped' not in self.group_widgets:
             return
         
@@ -883,7 +932,7 @@ Accounts will not be deleted."):
             body.pack_forget()
     
     def create_account_row(self, account: dict, in_group: bool = False, group_id: str = None, parent=None):
-        """Create row for account"""
+
         if parent is None:
             parent = self.accounts_frame
         
@@ -1013,7 +1062,7 @@ Accounts will not be deleted."):
         self.update_proxy_stats()
     
     def create_proxy_row(self, index: int, proxy: dict):
-        """Create a row for a proxy"""
+
         row_frame = ctk.CTkFrame(self.proxies_frame, fg_color=COLORS['light'], height=35)
         row_frame.pack(fill="x", pady=1)
         row_frame.pack_propagate(False)
@@ -1058,6 +1107,31 @@ Accounts will not be deleted."):
         last_check = proxy.get('last_check', '-')[:16] if proxy.get('last_check') else '-'
         ctk.CTkLabel(row_frame, text=last_check, width=130, anchor="w", font=ctk.CTkFont(size=11)).pack(side="left", padx=2)
         
+        fraud_score = "-"
+        fraud_color = COLORS['text']
+        if proxy.get('advanced_check'):
+            score = proxy['advanced_check'].get('fraud_score', 0)
+            fraud_score = str(score)
+            if score <= 20:
+                fraud_color = COLORS['success']
+            elif score <= 40:
+                fraud_color = "#f1c40f"
+            elif score <= 60:
+                fraud_color = COLORS['warning']
+            elif score <= 80:
+                fraud_color = COLORS['danger']
+            else:
+                fraud_color = "#8B0000"
+        
+        ctk.CTkLabel(
+            row_frame,
+            text=fraud_score,
+            width=100,
+            anchor="w",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=fraud_color
+        ).pack(side="left", padx=2)
+        
         ctk.CTkButton(
             row_frame,
             text="Check",
@@ -1067,23 +1141,34 @@ Accounts will not be deleted."):
             fg_color=COLORS['warning'],
             font=ctk.CTkFont(size=11)
         ).pack(side="left", padx=2)
+        
+        ctk.CTkButton(
+            row_frame,
+            text="Advanced",
+            command=lambda: self.check_single_proxy_advanced(index),
+            width=75,
+            height=24,
+            fg_color="#9b59b6",
+            hover_color="#8e44ad",
+            font=ctk.CTkFont(size=11)
+        ).pack(side="left", padx=2)
     
     def toggle_account_selection(self, account_id: str, selected: bool):
-        """Toggle account selection"""
+
         if selected and account_id not in self.selected_accounts:
             self.selected_accounts.append(account_id)
         elif not selected and account_id in self.selected_accounts:
             self.selected_accounts.remove(account_id)
     
     def toggle_proxy_selection(self, index: int, selected: bool):
-        """Toggle proxy selection"""
+
         if selected and index not in self.selected_proxies:
             self.selected_proxies.append(index)
         elif not selected and index in self.selected_proxies:
             self.selected_proxies.remove(index)
     
     def _create_tooltip_text(self, account: dict) -> str:
-        """Create tooltip text account"""
+
         lines = []
         lines.append(f"Email: {account.get('email') or 'Not set'}")
         lines.append(f"Name: {account.get('name') or '-'}")
@@ -1096,8 +1181,7 @@ Accounts will not be deleted."):
         return "\n".join(lines)
     
     def _bind_tooltip(self, widget, text: str):
-        """Bind tooltip to widget"""
-        
+
         def show_tooltip(event):
             if self.tooltip_timer:
                 self.root.after_cancel(self.tooltip_timer)
@@ -1139,7 +1223,7 @@ Accounts will not be deleted."):
         widget.bind("<Button-1>", hide_tooltip)
     
     def _hide_tooltip(self):
-        """Hide active tooltip"""
+
         if self.active_tooltip:
             try:
                 self.active_tooltip.destroy()
@@ -1148,14 +1232,14 @@ Accounts will not be deleted."):
             self.active_tooltip = None
     
     def close_browser(self, account_id: str):
-        """Close browser for specific account"""
+
         if messagebox.askyesno("Confirm", "Close browser for this account?"):
             self.browser_manager.close_browser(account_id)
             self.show_toast("Browser closed successfully", "success")
             self.refresh_accounts()
     
     def check_account_status(self, account_id: str):
-        """Manually check and update account status"""
+
         account = self.account_manager.get_account(account_id)
         if not account:
             return
@@ -1218,7 +1302,7 @@ Accounts will not be deleted."):
         threading.Thread(target=check_status_thread, daemon=True).start()
     
     def update_stats(self):
-        """Update accounts statistics"""
+
         stats = self.account_manager.get_account_stats()
         stats_text = (
             f"Total: {stats['total']} | "
@@ -1229,7 +1313,7 @@ Accounts will not be deleted."):
         self.stats_label.configure(text=stats_text)
     
     def update_proxy_stats(self):
-        """Update proxy statistics"""
+
         proxies = self.proxy_manager.get_all_proxies()
         total = len(proxies)
         alive = len([p for p in proxies if p.get('status') == 'alive'])
@@ -1244,7 +1328,7 @@ Accounts will not be deleted."):
         self.update_proxy_stats()
     
     def search_accounts(self):
-        """Search accounts"""
+
         query = self.search_entry.get()
         if not query:
             self.refresh_accounts()
@@ -1259,12 +1343,17 @@ Accounts will not be deleted."):
             self.create_account_row(account)
     
     def add_account_dialog(self):
-        """Show dialog to add new account"""
+        if not self._can_open_dialog():
+            return
+
         from src.gui.dialogs import AddAccountDialog
         dialog = AddAccountDialog(self.root, self.proxy_manager, self.on_account_added)
+        self._register_dialog(dialog)
     
     def edit_account_dialog(self, account_id: str):
-        """Show dialog to edit account"""
+        if not self._can_open_dialog():
+            return
+
         account = self.account_manager.get_account(account_id)
         if not account:
             messagebox.showerror("Error", "Account not found!")
@@ -1272,9 +1361,12 @@ Accounts will not be deleted."):
         
         from src.gui.dialogs import EditAccountDialog
         dialog = EditAccountDialog(self.root, account, self.on_account_edited)
+        self._register_dialog(dialog)
     
     def edit_account_tabbed_dialog(self, account_id: str):
-        """Show tabbed dialog to edit account info and proxy settings"""
+        if not self._can_open_dialog():
+            return
+
         account = self.account_manager.get_account(account_id)
         if not account:
             messagebox.showerror("Error", "Account not found!")
@@ -1282,9 +1374,10 @@ Accounts will not be deleted."):
         
         from src.gui.dialogs import EditAccountTabbedDialog
         dialog = EditAccountTabbedDialog(self.root, account, self.proxy_manager, self.on_account_edited)
+        self._register_dialog(dialog)
     
     def on_account_edited(self, account_id: str, updates: dict) -> bool:
-        """Handle account edits from dialog"""
+
         if self.account_manager.update_account(account_id, **updates):
             self.show_toast("Account updated successfully", "success")
             self.refresh_accounts()
@@ -1294,12 +1387,15 @@ Accounts will not be deleted."):
             return False
     
     def add_proxy_dialog(self):
-        """Show dialog add new proxy"""
+        if not self._can_open_dialog():
+            return
+
         from src.gui.dialogs import AddProxyDialog
         dialog = AddProxyDialog(self.root, self.proxy_manager, self.on_proxy_added)
+        self._register_dialog(dialog)
     
     def on_account_added(self, account: dict, update: bool = False) -> bool:
-        """Handle account additions or updates dialogs"""
+
         if update:
             updatable_keys = ['email', 'status', 'notes', 'use_proxy', 'proxy_mode', 'proxy_id', 'name']
             update_data = {key: account.get(key) for key in updatable_keys}
@@ -1319,11 +1415,11 @@ Accounts will not be deleted."):
             return False
     
     def on_proxy_added(self):
-        """Callback proxy is added"""
+
         self.refresh_proxies()
     
     def import_proxies_file(self):
-        """Import proxies from file"""
+
         file_path = filedialog.askopenfilename(
             title="Select Proxy File",
             filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")]
@@ -1335,7 +1431,7 @@ Accounts will not be deleted."):
             self.refresh_proxies()
     
     def check_all_proxies(self):
-        """Check all proxies"""
+
         if getattr(self, "_checking_proxies", False):
             self.show_toast("Proxy checking is already running", "info")
             return
@@ -1362,7 +1458,7 @@ Accounts will not be deleted."):
         threading.Thread(target=check_thread, daemon=True).start()
     
     def check_single_proxy(self, index: int):
-        """Check single proxy"""
+
         proxy = self.proxy_manager.get_proxy_by_index(index)
         if proxy:
             def check_thread():
@@ -1373,8 +1469,357 @@ Accounts will not be deleted."):
             
             threading.Thread(target=check_thread, daemon=True).start()
     
+    def check_single_proxy_advanced(self, index: int):
+        if self._checking_advanced_proxy:
+            self.show_toast("Advanced check is already running, please wait", "info")
+            return
+        
+        api_key = self.config_manager.get_ip2location_api_key()
+        if not api_key:
+            api_key = self._prompt_api_key()
+            if not api_key:
+                return
+        
+        proxy = self.proxy_manager.get_proxy_by_index(index)
+        if proxy:
+            self._checking_advanced_proxy = True
+            
+            def check_thread():
+                try:
+                    updated, api_data = self.proxy_manager.check_proxy_advanced(proxy, api_key)
+                    self.proxy_manager.proxies[index] = updated
+                    self.proxy_manager.save_proxies()
+                    self.root.after(0, self.refresh_proxies)
+                    
+                    if api_data:
+                        analysis = self.proxy_manager.analyze_ip2location_result(api_data)
+                        self.root.after(0, lambda: self._show_advanced_check_result(proxy, analysis))
+                    else:
+                        self._checking_advanced_proxy = False
+                except:
+                    self._checking_advanced_proxy = False
+            
+            threading.Thread(target=check_thread, daemon=True).start()
+    
+    def check_all_proxies_advanced(self):
+        api_key = self.config_manager.get_ip2location_api_key()
+        if not api_key:
+            api_key = self._prompt_api_key()
+            if not api_key:
+                return
+        
+        if hasattr(self, '_checking_proxies') and self._checking_proxies:
+            self.show_toast("Proxy checking is already running", "info")
+            return
+
+        proxies = self.proxy_manager.get_all_proxies()
+        total = len(proxies)
+        if total == 0:
+            self.show_toast("No proxies to check", "warning")
+            return
+
+        self._checking_proxies = True
+        self.proxy_status_var.set(f"Advanced checking... 0/{total}")
+
+        def progress_update(done, total_count):
+            self.proxy_status_var.set(f"Advanced checking... {done}/{total_count}")
+
+        def check_thread():
+            for idx, proxy in enumerate(proxies):
+                updated, api_data = self.proxy_manager.check_proxy_advanced(proxy, api_key)
+                self.proxy_manager.proxies[idx] = updated
+                self.root.after(0, progress_update, idx + 1, total)
+            
+            self.proxy_manager.save_proxies()
+            self.root.after(0, self._finish_proxy_check)
+        
+        threading.Thread(target=check_thread, daemon=True).start()
+    
+    def _prompt_api_key(self) -> Optional[str]:
+
+        dialog = ctk.CTkInputDialog(
+            text="Enter IP2Location API Key:\n(Get free key at https://www.ip2location.io/)",
+            title="API Key Required"
+        )
+        api_key = dialog.get_input()
+        
+        if api_key:
+            self.config_manager.set_ip2location_api_key(api_key)
+            self.show_toast("API Key saved successfully", "success")
+            return api_key
+        return None
+    
+    def _show_advanced_check_result(self, proxy: dict, analysis: dict):
+        if not self._can_open_dialog():
+            self._checking_advanced_proxy = False
+            return
+            
+        result_window = ctk.CTkToplevel(self.root)
+        result_window.title("Advanced Proxy Analysis")
+        result_window.geometry("900x700")
+        result_window.transient(self.root)
+        result_window.grab_set()
+        self._register_dialog(result_window)
+        
+        main_frame = ctk.CTkScrollableFrame(result_window)
+        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
+        
+        header_frame = ctk.CTkFrame(main_frame, fg_color=COLORS['dark'])
+        header_frame.pack(fill="x", pady=(0, 15))
+        
+        ctk.CTkLabel(
+            header_frame,
+            text=f"Proxy: {proxy['host']}:{proxy['port']}",
+            font=ctk.CTkFont(size=18, weight="bold")
+        ).pack(pady=10, padx=15)
+        
+        if proxy.get('advanced_check'):
+            last_check = proxy['advanced_check'].get('last_advanced_check', 'Unknown')
+            ctk.CTkLabel(
+                header_frame,
+                text=f"Last check: {last_check}",
+                font=ctk.CTkFont(size=11)
+            ).pack(pady=(0, 10))
+        
+        score = analysis['fraud_score']
+        risk_level = analysis['risk_level']
+        risk_color = analysis['risk_color']
+        
+        color_map = {
+            'success': COLORS['success'],
+            'warning': COLORS['warning'],
+            'danger': COLORS['danger']
+        }
+        
+        score_frame = ctk.CTkFrame(main_frame, fg_color=COLORS['light'])
+        score_frame.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(
+            score_frame,
+            text="FRAUD SCORE",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(pady=(10, 5), padx=15, anchor="w")
+        
+        score_display = ctk.CTkFrame(score_frame, fg_color="transparent")
+        score_display.pack(fill="x", padx=15, pady=5)
+        
+        ctk.CTkLabel(
+            score_display,
+            text=f"{score}/100",
+            font=ctk.CTkFont(size=32, weight="bold"),
+            text_color=color_map.get(risk_color, COLORS['text'])
+        ).pack(side="left", padx=(0, 20))
+        
+        progress_container = ctk.CTkFrame(score_display, fg_color="transparent")
+        progress_container.pack(side="left", fill="x", expand=True)
+        
+        ctk.CTkProgressBar(
+            progress_container,
+            width=300,
+            height=20,
+            progress_color=color_map.get(risk_color, COLORS['primary'])
+        ).pack(fill="x")
+        progress_bar = ctk.CTkProgressBar(
+            progress_container,
+            width=300,
+            height=20,
+            progress_color=color_map.get(risk_color, COLORS['primary'])
+        )
+        progress_bar.pack(fill="x")
+        progress_bar.set(score / 100)
+        
+        ctk.CTkLabel(
+            score_frame,
+            text=risk_level,
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=color_map.get(risk_color, COLORS['text'])
+        ).pack(pady=5)
+        
+        ctk.CTkLabel(
+            score_frame,
+            text=analysis['recommendation'],
+            font=ctk.CTkFont(size=12),
+            wraplength=800,
+            justify="center"
+        ).pack(pady=(5, 15), padx=20)
+        
+        security_frame = ctk.CTkFrame(main_frame, fg_color=COLORS['light'])
+        security_frame.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(
+            security_frame,
+            text="SECURITY ANALYSIS",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(pady=(10, 5), padx=15, anchor="w")
+        
+        security_text = ctk.CTkTextbox(security_frame, height=120, fg_color=COLORS['dark'])
+        security_text.pack(fill="both", padx=15, pady=(0, 10))
+        
+        for issue in analysis['security_issues']:
+            security_text.insert("end", f"{issue}\n\n")
+        security_text.configure(state="disabled")
+        
+        if analysis.get('positive_points'):
+            positive_frame = ctk.CTkFrame(main_frame, fg_color=COLORS['light'])
+            positive_frame.pack(fill="x", pady=10)
+            
+            ctk.CTkLabel(
+                positive_frame,
+                text="✨ POSITIVE CHARACTERISTICS",
+                font=ctk.CTkFont(size=14, weight="bold")
+            ).pack(pady=(10, 5), padx=15, anchor="w")
+            
+            positive_text = ctk.CTkTextbox(positive_frame, height=80, fg_color=COLORS['dark'])
+            positive_text.pack(fill="both", padx=15, pady=(0, 10))
+            
+            for point in analysis['positive_points']:
+                positive_text.insert("end", f"{point}\n")
+            positive_text.configure(state="disabled")
+        
+        location_frame = ctk.CTkFrame(main_frame, fg_color=COLORS['light'])
+        location_frame.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(
+            location_frame,
+            text="LOCATION INFORMATION",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(pady=(10, 5), padx=15, anchor="w")
+        
+        loc_info = analysis['location_info']
+        location_text = f"""IP Address: {loc_info['ip']}
+Country: {loc_info['country']} ({loc_info['country_code']})
+Region: {loc_info['region']}
+City: {loc_info['city']}
+ZIP Code: {loc_info['zip_code']}
+Coordinates: {loc_info['latitude']}, {loc_info['longitude']}
+Time Zone: {loc_info['time_zone']}"""
+        
+        ctk.CTkLabel(
+            location_frame,
+            text=location_text,
+            font=ctk.CTkFont(size=12),
+            justify="left"
+        ).pack(anchor="w", padx=15, pady=(0, 10))
+        
+        network_frame = ctk.CTkFrame(main_frame, fg_color=COLORS['light'])
+        network_frame.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(
+            network_frame,
+            text="NETWORK INFORMATION",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(pady=(10, 5), padx=15, anchor="w")
+        
+        net_info = analysis['network_info']
+        network_text = f"""ISP: {net_info['isp']}
+Domain: {net_info['domain']}
+AS Number: {net_info['as_number']}
+AS Name: {net_info['as_name']}
+Usage Type: {net_info['usage_type']}
+Connection Speed: {net_info['net_speed']}"""
+        
+        ctk.CTkLabel(
+            network_frame,
+            text=network_text,
+            font=ctk.CTkFont(size=12),
+            justify="left"
+        ).pack(anchor="w", padx=15, pady=(0, 10))
+        
+        proxy_frame = ctk.CTkFrame(main_frame, fg_color=COLORS['light'])
+        proxy_frame.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(
+            proxy_frame,
+            text="PROXY CHARACTERISTICS",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(pady=(10, 5), padx=15, anchor="w")
+        
+        proxy_chars = analysis['proxy_characteristics']
+        proxy_text = f"""Proxy Type: {proxy_chars['proxy_type']}
+Threat Level: {proxy_chars['threat_level']}
+Provider: {proxy_chars['provider']}
+Is Proxy: {proxy_chars['is_proxy']}
+Last Seen as Proxy: {proxy_chars['last_seen']}
+Country Threat Level: {proxy_chars['country_threat']}"""
+        
+        ctk.CTkLabel(
+            proxy_frame,
+            text=proxy_text,
+            font=ctk.CTkFont(size=12),
+            justify="left"
+        ).pack(anchor="w", padx=15, pady=(0, 10))
+        
+        json_frame = ctk.CTkFrame(main_frame, fg_color=COLORS['light'])
+        json_frame.pack(fill="x", pady=10)
+        
+        json_visible = [False]
+        json_textbox = [None]
+        
+        def toggle_json():
+            if json_visible[0]:
+                json_textbox[0].pack_forget()
+                toggle_btn.configure(text="Show Raw API Response ▼")
+                json_visible[0] = False
+            else:
+                import json
+                json_text = ctk.CTkTextbox(json_frame, height=200, fg_color=COLORS['dark'])
+                json_text.pack(fill="both", padx=15, pady=(0, 10))
+                json_text.insert("1.0", json.dumps(analysis['raw_data'], indent=2, ensure_ascii=False))
+                json_text.configure(state="disabled")
+                json_textbox[0] = json_text
+                toggle_btn.configure(text="Hide Raw API Response ▲")
+                json_visible[0] = True
+        
+        toggle_btn = ctk.CTkButton(
+            json_frame,
+            text="Show Raw API Response ▼",
+            command=toggle_json,
+            fg_color=COLORS['primary'],
+            width=250
+        )
+        toggle_btn.pack(pady=10)
+        
+        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        button_frame.pack(fill="x", pady=(10, 0))
+        
+        def copy_to_clipboard():
+            import json
+            result_text = f"""=== PROXY ANALYSIS REPORT ===
+Proxy: {proxy['host']}:{proxy['port']}
+Fraud Score: {score}/100
+Risk Level: {risk_level}
+
+Security Issues:
+"""
+            for issue in analysis['security_issues']:
+                result_text += f"  {issue}\n"
+            
+            result_text += f"\nLocation: {loc_info['city']}, {loc_info['country']}\n"
+            result_text += f"ISP: {net_info['isp']}\n"
+            result_text += f"\nFull JSON:\n{json.dumps(analysis['raw_data'], indent=2, ensure_ascii=False)}"
+            
+            self.root.clipboard_clear()
+            self.root.clipboard_append(result_text)
+            self.show_toast("Copied to clipboard!", "success")
+        
+        ctk.CTkButton(
+            button_frame,
+            text="Copy Report",
+            command=copy_to_clipboard,
+            fg_color=COLORS['primary'],
+            width=150
+        ).pack(side="left", padx=5)
+        
+        ctk.CTkButton(
+            button_frame,
+            text="✖️ Close",
+            command=lambda: self._close_dialog(result_window),
+            fg_color=COLORS['danger'],
+            width=150
+        ).pack(side="right", padx=5)
+    
     def delete_selected_proxies(self):
-        """Delete selected proxies"""
+
         if not self.selected_proxies:
             self.show_toast("No proxies selected", "warning")
             return
@@ -1386,14 +1831,14 @@ Accounts will not be deleted."):
             self.refresh_proxies()
     
     def clear_dead_proxies(self):
-        """Clear all dead proxies"""
+
         if messagebox.askyesno("Confirm", "Remove all dead proxies?"):
             count = self.proxy_manager.clear_dead_proxies()
             self.show_toast(f"Removed {count} dead proxies", "success")
             self.refresh_proxies()
     
     def delete_selected_accounts(self):
-        """Delete selected accounts"""
+
         if not self.selected_accounts:
             messagebox.showwarning("Warning", "No accounts selected!")
             return
@@ -1405,17 +1850,20 @@ Accounts will not be deleted."):
             self.refresh_accounts()
     
     def delete_account(self, account_id: str):
-        """Delete single account"""
+
         if messagebox.askyesno("Confirm", "Delete this account?"):
             if self.account_manager.remove_account(account_id):
                 self.show_toast("Account deleted successfully", "success")
                 self.refresh_accounts()
     
     def remove_account_smart(self, account_id: str, in_group: bool, group_id: str = None):
-        """Ungroup or Delete based on context"""
+        if not self._can_open_dialog():
+            return
+
         if in_group and group_id:
             from src.gui.dialogs import RemoveAccountDialog
             dialog = RemoveAccountDialog(self.root, account_id, group_id)
+            self._register_dialog(dialog)
             self.root.wait_window(dialog)
             
             if dialog.result == "ungroup":
@@ -1433,7 +1881,9 @@ Accounts will not be deleted."):
                     self.refresh_accounts()
     
     def edit_account_proxy(self, account_id: str):
-        """Edit proxy settings specific account"""
+        if not self._can_open_dialog():
+            return
+
         account = self.account_manager.get_account(account_id)
         if not account:
             self.show_toast("Account not found", "error")
@@ -1441,6 +1891,7 @@ Accounts will not be deleted."):
         
         from src.gui.dialogs import EditAccountProxyDialog
         dialog = EditAccountProxyDialog(self.root, account, self.proxy_manager)
+        self._register_dialog(dialog)
         self.root.wait_window(dialog)
         
         if dialog.result:
@@ -1451,7 +1902,7 @@ Accounts will not be deleted."):
                 self.show_toast("Failed to update proxy settings", "error")
 
     def open_account(self, account_id: str):
-        """Open account in browser"""
+
         account = self.account_manager.get_account(account_id)
         if not account:
             return
@@ -1598,6 +2049,9 @@ Accounts will not be deleted."):
         self.root.after(duration, remove_toast)
     
     def open_error_logs(self):
+        if not self._can_open_dialog():
+            return
+            
         error_log_dir = os.path.join(DATA_DIR, "logs", "errors")
         if not os.path.exists(error_log_dir):
             os.makedirs(error_log_dir, exist_ok=True)
@@ -1613,6 +2067,7 @@ Accounts will not be deleted."):
         dialog.geometry("800x600")
         dialog.transient(self.root)
         dialog.grab_set()
+        self._register_dialog(dialog)
         
         toolbar = ctk.CTkFrame(dialog, fg_color=COLORS['light'])
         toolbar.pack(fill="x", padx=10, pady=10)
@@ -1679,12 +2134,12 @@ Accounts will not be deleted."):
         refresh_log()
     
     def run(self):
-        """Run the application"""
+
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.mainloop()
     
     def on_closing(self):
-        """Handle window closing"""
+
         if messagebox.askokcancel("Quit", "Do you want to quit?"):
             self.browser_manager.close_all_browsers()
             self.root.destroy()

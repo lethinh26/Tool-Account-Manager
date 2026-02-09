@@ -2,8 +2,9 @@ import json
 import os
 import requests
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from src.config import PROXIES_FILE
 
 
@@ -25,7 +26,6 @@ class ProxyManager:
             json.dump(self.proxies, f, indent=2, ensure_ascii=False)
     
     def add_proxy(self, proxy_string: str) -> bool:
-        """protocol://host:port:user:pass or protocol://host:port"""
         try:
             proxy_data = self.parse_proxy_string(proxy_string)
             if not proxy_data:
@@ -161,7 +161,7 @@ class ProxyManager:
             
             if success:
                 proxy['status'] = 'alive'
-                proxy['response_time'] = round(response_time * 1000, 2)  # ms
+                proxy['response_time'] = round(response_time * 1000, 2)
                 proxy['last_check'] = time.strftime('%Y-%m-%d %H:%M:%S')
                 return proxy
             else:
@@ -219,3 +219,170 @@ class ProxyManager:
         self.proxies = [p for p in self.proxies if p['status'] != 'dead']
         self.save_proxies()
         return original_count - len(self.proxies)
+    
+    def check_proxy_advanced(self, proxy: Dict, api_key: str, timeout: int = 10) -> Tuple[Dict, Optional[Dict]]:
+        try:
+            updated_proxy = self.check_proxy(proxy, timeout)
+            
+            if updated_proxy['status'] != 'alive':
+                return updated_proxy, None
+            
+            protocol = proxy['protocol'].lower()
+            if proxy['username'] and proxy['password']:
+                proxy_url = f"{protocol}://{proxy['username']}:{proxy['password']}@{proxy['host']}:{proxy['port']}"
+            else:
+                proxy_url = f"{protocol}://{proxy['host']}:{proxy['port']}"
+            
+            proxies = {
+                'http': proxy_url,
+                'https': proxy_url
+            }
+            
+            ip_response = requests.get('http://api.ipify.org?format=json', proxies=proxies, timeout=timeout)
+            if ip_response.status_code != 200:
+                return updated_proxy, None
+            
+            proxy_ip = ip_response.json().get('ip', proxy['host'])
+            
+            api_url = f"https://api.ip2location.io/?key={api_key}&ip={proxy_ip}"
+            api_response = requests.get(api_url, timeout=timeout)
+            
+            if api_response.status_code != 200:
+                return updated_proxy, None
+            
+            api_data = api_response.json()
+            
+            updated_proxy['advanced_check'] = {
+                'fraud_score': api_data.get('fraud_score', 0),
+                'is_proxy': api_data.get('is_proxy', False),
+                'country': api_data.get('country_name', 'Unknown'),
+                'isp': api_data.get('isp', 'Unknown'),
+                'proxy_type': api_data.get('proxy', {}).get('proxy_type', '-'),
+                'last_advanced_check': time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            return updated_proxy, api_data
+            
+        except Exception as e:
+            print(f"Advanced proxy check error: {e}")
+            return proxy, None
+    
+    def analyze_ip2location_result(self, data: Dict) -> Dict:
+        fraud_score = data.get('fraud_score', 0)
+        
+        if fraud_score <= 20:
+            risk_level = "✅ Clean IP"
+            risk_color = "success"
+            recommendation = "This IP is safe to use. No suspicious activity detected."
+        elif fraud_score <= 40:
+            risk_level = "⚠️ Light Suspicious"
+            risk_color = "warning"
+            recommendation = "IP has some signs that need monitoring. Should check before using for sensitive tasks."
+        elif fraud_score <= 60:
+            risk_level = "⚠️ Risky IP - Monitor Required"
+            risk_color = "warning"
+            recommendation = "This IP has many suspicious signs. Not recommended for important work. Requires close monitoring if used."
+        elif fraud_score <= 80:
+            risk_level = "🔴 Dangerous"
+            risk_color = "danger"
+            recommendation = "EXTREMELY RISKY IP! Has history of malicious activity. Avoid using for any important purpose."
+        else:
+            risk_level = "🔴 Very Bad"
+            risk_color = "danger"
+            recommendation = "THIS IP IS VERY DANGEROUS! Blacklisted with attack/spam history. DO NOT USE!"
+        
+        security_issues = []
+        positive_points = []
+        proxy_info = data.get('proxy', {})
+        
+        if data.get('is_proxy', False):
+            proxy_type = proxy_info.get('proxy_type', '-')
+            last_seen = proxy_info.get('last_seen', 0)
+            
+            if proxy_info.get('is_vpn', False):
+                security_issues.append("🔴 VPN Service Detected - Likely a VPN server")
+            
+            if proxy_info.get('is_tor', False):
+                security_issues.append("🔴 TOR Exit Node - IP belongs to TOR network (high anonymity)")
+            
+            if proxy_info.get('is_data_center', False):
+                security_issues.append("⚠️ Data Center IP - IP from server/VPS, not real user")
+            
+            if proxy_info.get('is_public_proxy', False):
+                security_issues.append("🔴 Public Proxy - Public proxy, not secure")
+            
+            if proxy_info.get('is_web_proxy', False):
+                security_issues.append("⚠️ Web Proxy - Proxy through web browser")
+            
+            if proxy_info.get('is_web_crawler', False):
+                security_issues.append("⚠️ Web Crawler/Bot - IP used for data collection bot")
+            
+            if proxy_info.get('is_spammer', False):
+                security_issues.append("🔴 Spammer IP - Has spam sending history")
+            
+            if proxy_info.get('is_scanner', False):
+                security_issues.append("🔴 Scanner IP - Has scanned/probed systems")
+            
+            if proxy_info.get('is_botnet', False):
+                security_issues.append("🔴 BOTNET IP - Part of botnet (EXTREMELY DANGEROUS!)")
+            
+            if proxy_info.get('is_bogon', False):
+                security_issues.append("🔴 Bogon IP - Invalid/unallocated IP address")
+            
+            if last_seen and last_seen <= 7:
+                security_issues.append(f"⚠️ Recently detected as proxy ({last_seen} days ago)")
+            elif last_seen and last_seen <= 30:
+                security_issues.append(f"⚠️ Previously detected as proxy ({last_seen} days ago)")
+            
+            if proxy_info.get('is_residential_proxy', False):
+                positive_points.append("✅ Residential Proxy - Real residential IP (higher trustability)")
+            
+            if proxy_type and proxy_type != '-' and proxy_type.lower() != 'vpn':
+                positive_points.append(f"ℹ️ Proxy type: {proxy_type}")
+        
+        if not security_issues:
+            positive_points.append("✅ No suspicious activity detected")
+            positive_points.append("✅ Clean IP, not blacklisted")
+        
+        location_info = {
+            'ip': data.get('ip', '-'),
+            'country': data.get('country_name', 'Unknown'),
+            'country_code': data.get('country_code', '-'),
+            'region': data.get('region_name', 'Unknown'),
+            'city': data.get('city_name', 'Unknown'),
+            'zip_code': data.get('zip_code', '-'),
+            'latitude': data.get('latitude', '-'),
+            'longitude': data.get('longitude', '-'),
+            'time_zone': data.get('time_zone', '-')
+        }
+        
+        network_info = {
+            'isp': data.get('isp', 'Unknown'),
+            'domain': data.get('domain', '-'),
+            'as_number': data.get('as', '-'),
+            'as_name': data.get('asn', '-'),
+            'usage_type': data.get('usage_type', 'Unknown'),
+            'net_speed': data.get('net_speed', 'Unknown')
+        }
+        
+        proxy_characteristics = {
+            'proxy_type': proxy_info.get('proxy_type', '-'),
+            'threat_level': proxy_info.get('threat', '-'),
+            'provider': proxy_info.get('provider', 'Unknown') if proxy_info.get('provider') else '-',
+            'is_proxy': 'Yes' if data.get('is_proxy', False) else 'No',
+            'last_seen': f"{proxy_info.get('last_seen', 0)} days ago" if proxy_info.get('last_seen') else 'Never',
+            'country_threat': data.get('country', {}).get('threat', '-') if isinstance(data.get('country'), dict) else '-'
+        }
+        
+        return {
+            'fraud_score': fraud_score,
+            'risk_level': risk_level,
+            'risk_color': risk_color,
+            'recommendation': recommendation,
+            'security_issues': security_issues if security_issues else ['✅ No security issues detected'],
+            'positive_points': positive_points,
+            'location_info': location_info,
+            'network_info': network_info,
+            'proxy_characteristics': proxy_characteristics,
+            'raw_data': data
+        }
