@@ -215,8 +215,26 @@ console.log('[Stealth] Anti-detect applied');
         ]
         return random.choice(common_resolutions) 
     
-    def create_browser(self, account_id: str, profile_path: str, 
-                      proxy: Optional[Dict] = None) -> webdriver.Chrome:
+    def _clear_cookies(self, profile_dir: Path):
+        cookie_files = [
+            'Cookies',
+            'Cookies-journal',
+            'Network/Cookies',
+            'Network/Cookies-journal'
+        ]
+        
+        default_dir = profile_dir / 'Default'
+        
+        for cookie_file in cookie_files:
+            cookie_path = default_dir / cookie_file
+            if cookie_path.exists():
+                try:
+                    os.remove(cookie_path)
+                    print(f"Cleared: {cookie_file}")
+                except Exception as e:
+                    print(f"Could not remove {cookie_file}: {e}")
+    
+    def create_browser(self, account_id: str, profile_path: str, proxy: Optional[Dict] = None) -> webdriver.Chrome:
         """
         Create chrome browser instance with profile
         Use local proxy server routes to remote proxy
@@ -227,6 +245,8 @@ console.log('[Stealth] Anti-detect applied');
             profile_dir = Path(profile_path).resolve()
             profile_dir.mkdir(parents=True, exist_ok=True)
             normalized_profile = profile_dir.as_posix()
+            
+            self._clear_cookies(profile_dir)
             
             chrome_options.add_argument(f"--user-data-dir={normalized_profile}")
             
