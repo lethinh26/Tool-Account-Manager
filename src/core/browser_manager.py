@@ -7,6 +7,8 @@ import shutil
 import logging
 import random
 import re
+import sqlite3
+import time
 from pathlib import Path
 from typing import Optional, Dict
 from src.config import CHROME_OPTIONS
@@ -216,23 +218,60 @@ console.log('[Stealth] Anti-detect applied');
         return random.choice(common_resolutions) 
     
     def _clear_cookies(self, profile_dir: Path):
-        cookie_files = [
-            'Cookies',
-            'Cookies-journal',
-            'Network/Cookies',
-            'Network/Cookies-journal'
+        default_dir = profile_dir / 'Default'
+        cookies_db = default_dir / 'Cookies'
+        
+        if not cookies_db.exists():
+            print("No cookies to clear")
+            return
+        
+        keep_domains = [
+            'google.com',
+            'gmail.com', 
+            'googleusercontent.com',
+            'gstatic.com',
+            'accounts.google.com',
+            'microsoft.com',
+            'live.com',
+            'outlook.com',
+            'microsoftonline.com',
+            'office.com',
+            'login.microsoftonline.com'
         ]
         
-        default_dir = profile_dir / 'Default'
-        
-        for cookie_file in cookie_files:
-            cookie_path = default_dir / cookie_file
-            if cookie_path.exists():
-                try:
-                    os.remove(cookie_path)
-                    print(f"Cleared: {cookie_file}")
-                except Exception as e:
-                    print(f"Could not remove {cookie_file}: {e}")
+        try:
+            conn = sqlite3.connect(str(cookies_db))
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT COUNT(*) FROM cookies")
+            total_before = cursor.fetchone()[0]
+            
+            conditions = []
+            for domain in keep_domains:
+                conditions.append(f"host_key NOT LIKE '%{domain}%'")
+            
+            where_clause = " AND ".join(conditions)
+            delete_query = f"DELETE FROM cookies WHERE {where_clause}"
+            
+            cursor.execute(delete_query)
+            deleted = cursor.rowcount
+            
+            conn.commit()
+            cursor.execute("SELECT COUNT(*) FROM cookies")
+            total_after = cursor.fetchone()[0]
+            
+            conn.close()
+            
+            print(f"✓ Cookies cleared: {deleted} deleted, {total_after} kept (Gmail/Microsoft)")
+            
+        except Exception as e:
+            print(f"⚠️  Could not clear cookies: {e}")
+            try:
+                cookies_journal = cookies_db.parent / 'Cookies-journal'
+                if cookies_journal.exists():
+                    os.remove(cookies_journal)
+            except:
+                pass
     
     def create_browser(self, account_id: str, profile_path: str, proxy: Optional[Dict] = None) -> webdriver.Chrome:
         """
