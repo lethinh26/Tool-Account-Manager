@@ -1,14 +1,24 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.edge.service import Service as EdgeService
+from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.webdriver.firefox.service import Service as FirefoxService
+from selenium.webdriver.firefox.options import Options as FirefoxOptions
+from selenium.webdriver.firefox.firefox_profile import FirefoxProfile
 from webdriver_manager.chrome import ChromeDriverManager
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
+from webdriver_manager.firefox import GeckoDriverManager
 import os
 import shutil
 import logging
+import threading
 import random
 import re
 import sqlite3
 import time
+import ctypes
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Optional, Dict
 from src.config import CHROME_OPTIONS
@@ -216,18 +226,27 @@ console.log('[Stealth] Anti-detect applied');
             (1280, 720)
         ]
         return random.choice(common_resolutions) 
+
+    def _get_screen_resolution(self):
+        try:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except:
+                pass
+
+            width = int(ctypes.windll.user32.GetSystemMetrics(0))
+            height = int(ctypes.windll.user32.GetSystemMetrics(1))
+            if width > 0 and height > 0:
+                return width, height
+        except:
+            pass
+
+        return 1920, 1080
     
-    def _clear_cookies(self, profile_dir: Path):
-        default_dir = profile_dir / 'Default'
-        cookies_db = default_dir / 'Cookies'
-        
-        if not cookies_db.exists():
-            print("No cookies to clear")
-            return
-        
+    def _clear_cookies(self, profile_dir: Path, browser_type: str):
         keep_domains = [
             'google.com',
-            'gmail.com', 
+            'gmail.com',
             'googleusercontent.com',
             'gstatic.com',
             'accounts.google.com',
@@ -238,32 +257,42 @@ console.log('[Stealth] Anti-detect applied');
             'office.com',
             'login.microsoftonline.com'
         ]
-        
+
+        if browser_type == 'firefox':
+            self._clear_firefox_cookies(profile_dir, keep_domains)
+        else:
+            self._clear_chromium_cookies(profile_dir, keep_domains)
+
+    def _clear_chromium_cookies(self, profile_dir: Path, keep_domains):
+        default_dir = profile_dir / 'Default'
+        cookies_db = default_dir / 'Cookies'
+
+        if not cookies_db.exists():
+            print("No cookies to clear")
+            return
+
         try:
             conn = sqlite3.connect(str(cookies_db))
             cursor = conn.cursor()
-            
-            cursor.execute("SELECT COUNT(*) FROM cookies")
-            total_before = cursor.fetchone()[0]
-            
+
             conditions = []
             for domain in keep_domains:
                 conditions.append(f"host_key NOT LIKE '%{domain}%'")
-            
+
             where_clause = " AND ".join(conditions)
             delete_query = f"DELETE FROM cookies WHERE {where_clause}"
-            
+
             cursor.execute(delete_query)
             deleted = cursor.rowcount
-            
+
             conn.commit()
             cursor.execute("SELECT COUNT(*) FROM cookies")
             total_after = cursor.fetchone()[0]
-            
+
             conn.close()
-            
+
             print(f"✓ Cookies cleared: {deleted} deleted, {total_after} kept (Gmail/Microsoft)")
-            
+
         except Exception as e:
             print(f"⚠️  Could not clear cookies: {e}")
             try:
@@ -272,135 +301,285 @@ console.log('[Stealth] Anti-detect applied');
                     os.remove(cookies_journal)
             except:
                 pass
+
+    def _clear_firefox_cookies(self, profile_dir: Path, keep_domains):
+        cookies_db = profile_dir / 'cookies.sqlite'
+
+        if not cookies_db.exists():
+            print("No cookies to clear")
+            return
+
+        try:
+            conn = sqlite3.connect(str(cookies_db))
+            cursor = conn.cursor()
+
+            conditions = []
+            for domain in keep_domains:
+                conditions.append(f"host NOT LIKE '%{domain}%'")
+
+            where_clause = " AND ".join(conditions)
+            delete_query = f"DELETE FROM moz_cookies WHERE {where_clause}"
+
+            cursor.execute(delete_query)
+            deleted = cursor.rowcount
+
+            conn.commit()
+            cursor.execute("SELECT COUNT(*) FROM moz_cookies")
+            total_after = cursor.fetchone()[0]
+
+            conn.close()
+
+            print(f"✓ Cookies cleared: {deleted} deleted, {total_after} kept (Gmail/Microsoft)")
+
+        except Exception as e:
+            print(f"⚠️  Could not clear cookies: {e}")
     
-    def create_browser(self, account_id: str, profile_path: str, proxy: Optional[Dict] = None) -> webdriver.Chrome:
+    def create_browser(self, account_id: str, profile_path: str, proxy: Optional[Dict] = None, browser_type: str = 'chrome') -> webdriver.Chrome:
         """
-        Create chrome browser instance with profile
+        Create browser instance with profile
         Use local proxy server routes to remote proxy
         """
         try:
-            chrome_options = Options()
-            
+            browser_type = (browser_type or 'chrome').lower()
+            if browser_type not in ['chrome', 'edge', 'firefox']:
+                browser_type = 'chrome'
+
             profile_dir = Path(profile_path).resolve()
             profile_dir.mkdir(parents=True, exist_ok=True)
-            normalized_profile = profile_dir.as_posix()
-            
-            self._clear_cookies(profile_dir)
-            
-            chrome_options.add_argument(f"--user-data-dir={normalized_profile}")
-            
-            for option in CHROME_OPTIONS:
-                chrome_options.add_argument(option)
-            
-            user_agent = self._get_stealth_user_agent()
-            chrome_options.add_argument(f"--user-agent={user_agent}")
-            
-            chrome_options.add_argument("--lang=en-US,en")
-            chrome_options.add_argument("--accept-lang=en-US,en;q=0.9")
-            
-            width, height = self._get_random_viewport()
-            chrome_options.add_argument(f"--window-size={width},{height}")
-            
-            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-            chrome_options.add_argument("--disable-site-isolation-trials")
-            
-            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
-            chrome_options.add_experimental_option('useAutomationExtension', False)
-            
-            chrome_options.add_experimental_option("prefs", {
-                "intl.accept_languages": "en-US,en",
-                "profile.default_content_setting_values.notifications": 1  # 1=ask, 2=block
-            })
-            
+
+            if browser_type == 'chrome':
+                browser_profile_dir = profile_dir
+            else:
+                browser_profile_dir = profile_dir / browser_type
+                browser_profile_dir.mkdir(parents=True, exist_ok=True)
+
+            self._clear_cookies(browser_profile_dir, browser_type)
+
+            driver_path = None
+            if browser_type == 'chrome':
+                driver_path = self._get_driver_path()
+            elif browser_type == 'edge':
+                driver_path = self._get_edge_driver_path()
+            else:
+                driver_path = self._get_firefox_driver_path()
+
+            local_proxy_url = None
             if proxy:
                 print(f"Setting up proxy route: {proxy['protocol']}://{proxy['host']}:{proxy['port']}")
                 local_proxy_url = self.local_proxy_manager.create_local_proxy(account_id, proxy)
-                
+
                 if not local_proxy_url:
                     raise Exception("Failed to create local proxy server")
-                
+
                 print(f" Local proxy ready: {local_proxy_url}")
                 print(f"  Routes to: {proxy['protocol']}://{proxy['host']}:{proxy['port']}")
-                
+
                 import socket
-                import time
                 port = int(local_proxy_url.split(':')[-1])
                 test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 test_sock.settimeout(2)
                 try:
                     test_sock.connect(('127.0.0.1', port))
                     test_sock.close()
-                    print(f"✓ Local proxy server is accessible")
+                    print("✓ Local proxy server is accessible")
                 except Exception as e:
                     raise Exception(f"Local proxy server not accessible: {e}")
-                
-                chrome_options.add_argument(f'--proxy-server={local_proxy_url}')
-                
-                chrome_options.add_argument('--proxy-bypass-list=<-loopback>')
-                
-                print(f"Chrome will use proxy: {local_proxy_url}")
             else:
                 print("No proxy configured for this account")
-            
-            try:
-                driver_path = self._get_driver_path()
-                log_path = profile_dir.joinpath("chromedriver.log")
-                service = Service(driver_path, log_path=str(log_path))
-                service.service_args = ["--verbose"]
-                print(f"ChromeDriver log file: {log_path}")
-                driver = webdriver.Chrome(service=service, options=chrome_options)
-            except Exception as driver_error:
-                print(f"ChromeDriver error: {driver_error}")
+
+            user_agent = self._get_stealth_user_agent()
+            driver = None
+            width, height = self._get_screen_resolution()
+
+            if browser_type == 'chrome':
+                chrome_options = Options()
+                chrome_options.add_argument(f"--user-data-dir={browser_profile_dir.as_posix()}")
+
+                for option in CHROME_OPTIONS:
+                    chrome_options.add_argument(option)
+
+                chrome_options.add_argument(f"--user-agent={user_agent}")
+                chrome_options.add_argument("--lang=en-US,en")
+                chrome_options.add_argument("--accept-lang=en-US,en;q=0.9")
+                chrome_options.add_argument(f"--window-size={width},{height}")
+                chrome_options.add_argument("--window-position=0,0")
+                chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+                chrome_options.add_argument("--disable-site-isolation-trials")
+                chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+                chrome_options.add_experimental_option('useAutomationExtension', False)
+                chrome_options.add_experimental_option("prefs", {
+                    "intl.accept_languages": "en-US,en",
+                    "profile.default_content_setting_values.notifications": 1
+                })
+
+                if local_proxy_url:
+                    chrome_options.add_argument(f'--proxy-server={local_proxy_url}')
+                    chrome_options.add_argument('--proxy-bypass-list=<-loopback>')
+                    print(f"Chrome will use proxy: {local_proxy_url}")
+
                 try:
-                    driver = webdriver.Chrome(options=chrome_options)
-                except Exception as chrome_error:
-                    self._cached_driver_path = None
+                    log_path = browser_profile_dir.joinpath("chromedriver.log")
+                    service = Service(driver_path, log_path=str(log_path))
+                    service.service_args = ["--verbose"]
+                    print(f"ChromeDriver log file: {log_path}")
+                    driver = webdriver.Chrome(service=service, options=chrome_options)
+                except Exception as driver_error:
+                    if "DRIVER_DOWNLOAD_FAILED" in str(driver_error):
+                        raise driver_error
+                    print(f"ChromeDriver error: {driver_error}")
+                    try:
+                        driver = webdriver.Chrome(options=chrome_options)
+                    except Exception as chrome_error:
+                        self._cached_driver_path = None
+                        raise Exception(
+                            f"Failed to create Chrome browser.\n\n"
+                            f"Solutions:\n"
+                            f"1. Install/Update Chrome browser\n"
+                            f"2. Run: pip install --upgrade selenium webdriver-manager\n"
+                            f"3. Delete cache: rmdir /s /q %USERPROFILE%\\.wdm\n"
+                            f"4. Restart application\n\n"
+                            f"Error: {str(chrome_error)}"
+                        )
+
+            elif browser_type == 'edge':
+                edge_options = EdgeOptions()
+                edge_options.add_argument(f"--user-data-dir={browser_profile_dir.as_posix()}")
+
+                for option in CHROME_OPTIONS:
+                    edge_options.add_argument(option)
+
+                edge_options.add_argument(f"--user-agent={user_agent}")
+                edge_options.add_argument("--lang=en-US,en")
+                edge_options.add_argument("--accept-lang=en-US,en;q=0.9")
+                edge_options.add_argument(f"--window-size={width},{height}")
+                edge_options.add_argument("--window-position=0,0")
+                edge_options.add_argument("--disable-blink-features=AutomationControlled")
+                edge_options.add_argument("--disable-site-isolation-trials")
+                edge_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+                edge_options.add_experimental_option('useAutomationExtension', False)
+                edge_options.add_experimental_option("prefs", {
+                    "intl.accept_languages": "en-US,en",
+                    "profile.default_content_setting_values.notifications": 1
+                })
+
+                if local_proxy_url:
+                    edge_options.add_argument(f'--proxy-server={local_proxy_url}')
+                    edge_options.add_argument('--proxy-bypass-list=<-loopback>')
+                    print(f"Edge will use proxy: {local_proxy_url}")
+
+                try:
+                    service = EdgeService(driver_path)
+                    driver = webdriver.Edge(service=service, options=edge_options)
+                except Exception as edge_error:
+                    if "DRIVER_DOWNLOAD_FAILED" in str(edge_error):
+                        raise edge_error
+                    print(f"EdgeDriver error: {edge_error}")
+                    try:
+                        driver = webdriver.Edge(options=edge_options)
+                    except Exception as edge_error2:
+                        raise Exception(
+                            f"Failed to create Edge browser.\n\n"
+                            f"Solutions:\n"
+                            f"1. Install/Update Microsoft Edge\n"
+                            f"2. Download msedgedriver and add to PATH\n"
+                            f"3. Run: pip install --upgrade selenium webdriver-manager\n"
+                            f"4. Restart application\n\n"
+                            f"Error: {str(edge_error2)}"
+                        )
+
+            else:
+                firefox_options = FirefoxOptions()
+                firefox_options.set_preference("intl.accept_languages", "en-US,en")
+                firefox_options.set_preference("general.useragent.override", user_agent)
+
+                firefox_profile = FirefoxProfile(str(browser_profile_dir))
+
+                if local_proxy_url:
+                    parsed = urlparse(local_proxy_url)
+                    host = parsed.hostname or '127.0.0.1'
+                    port = parsed.port or 0
+                    scheme = (parsed.scheme or '').lower()
+
+                    firefox_options.set_preference("network.proxy.type", 1)
+                    if scheme.startswith('socks'):
+                        firefox_options.set_preference("network.proxy.socks", host)
+                        firefox_options.set_preference("network.proxy.socks_port", port)
+                        firefox_options.set_preference("network.proxy.socks_version", 5)
+                        firefox_options.set_preference("network.proxy.socks_remote_dns", True)
+                    else:
+                        firefox_options.set_preference("network.proxy.http", host)
+                        firefox_options.set_preference("network.proxy.http_port", port)
+                        firefox_options.set_preference("network.proxy.ssl", host)
+                        firefox_options.set_preference("network.proxy.ssl_port", port)
+                        firefox_options.set_preference("network.proxy.no_proxies_on", "")
+
+                    print(f"Firefox will use proxy: {local_proxy_url}")
+
+                try:
+                    service = FirefoxService(driver_path)
+                    driver = webdriver.Firefox(service=service, options=firefox_options, firefox_profile=firefox_profile)
+                except Exception as firefox_error:
+                    if "DRIVER_DOWNLOAD_FAILED" in str(firefox_error):
+                        raise firefox_error
                     raise Exception(
-                        f"Failed to create Chrome browser.\n\n"
+                        f"Failed to create Firefox browser.\n\n"
                         f"Solutions:\n"
-                        f"1. Install/Update Chrome browser\n"
+                        f"1. Install/Update Firefox\n"
                         f"2. Run: pip install --upgrade selenium webdriver-manager\n"
-                        f"3. Delete cache: rmdir /s /q %USERPROFILE%\\.wdm\n"
-                        f"4. Restart application\n\n"
-                        f"Error: {str(chrome_error)}"
+                        f"3. Restart application\n\n"
+                        f"Error: {str(firefox_error)}"
                     )
-            
+
             stealth_script = self._get_stealth_scripts()
-            try:
-                driver.execute_cdp_cmd(
-                    "Page.addScriptToEvaluateOnNewDocument",
-                    {"source": stealth_script}
-                )
-                print("✓ Anti-detect scripts applied")
-            except Exception as e:
-                print(f"Warning: unable to apply stealth scripts ({e})")
-            
+            if hasattr(driver, "execute_cdp_cmd"):
+                try:
+                    driver.execute_cdp_cmd(
+                        "Page.addScriptToEvaluateOnNewDocument",
+                        {"source": stealth_script}
+                    )
+                    print("✓ Anti-detect scripts applied")
+                except Exception as e:
+                    print(f"Warning: unable to apply stealth scripts ({e})")
+
             try:
                 driver.execute_script(stealth_script)
                 print("✓ Stealth script executed immediately")
             except Exception as script_error:
                 print(f"⚠️  Warning: Failed to execute script immediately: {script_error}")
-            
+
             try:
-                driver.execute_cdp_cmd("Emulation.setTimezoneOverride", {"timezoneId": "America/New_York"})
+                driver.set_window_rect(0, 0, width, height)
             except:
-                pass
-            
-            width, height = self._get_random_viewport()
-            try:
-                driver.execute_cdp_cmd("Emulation.setDeviceMetricsOverride", {
-                    "width": width,
-                    "height": height,
-                    "deviceScaleFactor": 1,
-                    "mobile": False
-                })
-            except:
-                pass
-            
+                try:
+                    driver.set_window_size(width, height)
+                except:
+                    pass
+
+            if hasattr(driver, "execute_cdp_cmd"):
+                try:
+                    driver.execute_cdp_cmd("Emulation.setTimezoneOverride", {"timezoneId": "America/New_York"})
+                except:
+                    pass
+
+                try:
+                    driver.execute_cdp_cmd("Emulation.setDeviceMetricsOverride", {
+                        "width": width,
+                        "height": height,
+                        "deviceScaleFactor": 1,
+                        "mobile": False
+                    })
+                except:
+                    pass
+            else:
+                try:
+                    driver.set_window_size(width, height)
+                except:
+                    pass
+
             self.drivers[account_id] = driver
-            
+
             return driver
-            
+
         except Exception as e:
             if proxy:
                 self.local_proxy_manager.stop_local_proxy(account_id)
@@ -418,14 +597,45 @@ console.log('[Stealth] Anti-detect applied');
     
     def close_browser(self, account_id: str):
         """Close browser for specific account"""
-        if account_id in self.drivers:
+        driver = self.drivers.get(account_id)
+        if driver is not None:
+            def quit_driver():
+                try:
+                    driver.quit()
+                except:
+                    pass
+
+            t = threading.Thread(target=quit_driver, daemon=True)
+            t.start()
+            t.join(3)
+
             try:
-                self.drivers[account_id].quit()
                 del self.drivers[account_id]
             except:
                 pass
-        
+
         self.local_proxy_manager.stop_local_proxy(account_id)
+
+    def is_driver_responsive(self, account_id: str, timeout: int = 2) -> bool:
+        driver = self.drivers.get(account_id)
+        if not driver:
+            return False
+
+        state = {'ok': True}
+
+        def ping():
+            try:
+                _ = driver.title
+            except:
+                state['ok'] = False
+
+        t = threading.Thread(target=ping, daemon=True)
+        t.start()
+        t.join(timeout)
+
+        if t.is_alive():
+            return False
+        return bool(state['ok'])
     
     def close_all_browsers(self):
         """Close all open browsers"""
@@ -705,7 +915,20 @@ return !!(
         if self._cached_driver_path and os.path.exists(self._cached_driver_path):
             return self._cached_driver_path
 
-        driver_path = ChromeDriverManager().install()
+        local_driver = self._get_local_driver_path("chromedriver.exe")
+        if local_driver:
+            self._cached_driver_path = local_driver
+            return self._cached_driver_path
+
+        path_driver = shutil.which("chromedriver")
+        if path_driver:
+            self._cached_driver_path = os.path.normpath(path_driver)
+            return self._cached_driver_path
+
+        try:
+            driver_path = self._install_driver_with_clean_env(ChromeDriverManager)
+        except Exception:
+            raise Exception("DRIVER_DOWNLOAD_FAILED: ChromeDriver download failed. Please enable internet and disable proxy.")
         driver_path = os.path.normpath(driver_path)
         print(f"ChromeDriver installed to: {driver_path}")
 
@@ -722,4 +945,81 @@ return !!(
             raise Exception(f"Invalid ChromeDriver path: {driver_path}")
 
         self._cached_driver_path = driver_path
+        return driver_path
+
+    def _get_local_driver_path(self, filename: str) -> Optional[str]:
+        root_dir = Path(__file__).resolve().parents[2]
+        driver_path = root_dir / "drivers" / filename
+        if driver_path.exists():
+            return os.path.normpath(str(driver_path))
+        return None
+
+    def _install_driver_with_clean_env(self, manager_cls):
+        keys = [
+            "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+            "http_proxy", "https_proxy", "all_proxy", "no_proxy"
+        ]
+        original = {}
+        try:
+            for key in keys:
+                if key in os.environ:
+                    original[key] = os.environ[key]
+                    del os.environ[key]
+            return manager_cls().install()
+        finally:
+            for key in keys:
+                if key in original:
+                    os.environ[key] = original[key]
+
+    def _get_edge_driver_path(self) -> str:
+        local_driver = self._get_local_driver_path("msedgedriver.exe")
+        if local_driver:
+            return local_driver
+
+        path_driver = shutil.which("msedgedriver")
+        if path_driver:
+            return os.path.normpath(path_driver)
+
+        try:
+            driver_path = self._install_driver_with_clean_env(EdgeChromiumDriverManager)
+        except Exception:
+            raise Exception("DRIVER_DOWNLOAD_FAILED: EdgeDriver download failed. Please enable internet and disable proxy.")
+        driver_path = os.path.normpath(driver_path)
+        if not driver_path.endswith('.exe'):
+            driver_dir = os.path.dirname(driver_path)
+            for file in os.listdir(driver_dir):
+                if file.lower() == 'msedgedriver.exe':
+                    driver_path = os.path.join(driver_dir, file)
+                    break
+
+        if not os.path.exists(driver_path) or not driver_path.endswith('.exe'):
+            raise Exception(f"Invalid EdgeDriver path: {driver_path}")
+
+        return driver_path
+
+    def _get_firefox_driver_path(self) -> str:
+        local_driver = self._get_local_driver_path("geckodriver.exe")
+        if local_driver:
+            return local_driver
+
+        path_driver = shutil.which("geckodriver")
+        if path_driver:
+            return os.path.normpath(path_driver)
+
+        try:
+            driver_path = self._install_driver_with_clean_env(GeckoDriverManager)
+        except Exception:
+            raise Exception("DRIVER_DOWNLOAD_FAILED: GeckoDriver download failed. Please enable internet and disable proxy.")
+
+        driver_path = os.path.normpath(driver_path)
+        if not driver_path.endswith('.exe'):
+            driver_dir = os.path.dirname(driver_path)
+            for file in os.listdir(driver_dir):
+                if file.lower() == 'geckodriver.exe':
+                    driver_path = os.path.join(driver_dir, file)
+                    break
+
+        if not os.path.exists(driver_path) or not driver_path.endswith('.exe'):
+            raise Exception(f"Invalid GeckoDriver path: {driver_path}")
+
         return driver_path

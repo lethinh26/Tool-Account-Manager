@@ -5,3 +5,4 @@ Pillow==12.0.0
 requests==2.31.0
 PySocks==1.7.1
 proxy.py==2.4.3
+cryptography==42.0.8

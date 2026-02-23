@@ -16,10 +16,22 @@ class ProxyManager:
         if os.path.exists(PROXIES_FILE):
             try:
                 with open(PROXIES_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    proxies = json.load(f)
+                    for p in proxies:
+                        if 'fail_count' not in p:
+                            p['fail_count'] = 0
+                        if 'quarantine_until' not in p:
+                            p['quarantine_until'] = 0
+                    return proxies
             except:
                 return []
         return []
+
+    def _is_quarantined(self, proxy: Dict) -> bool:
+        try:
+            return int(proxy.get('quarantine_until') or 0) > int(time.time())
+        except:
+            return False
     
     def save_proxies(self):
         with open(PROXIES_FILE, 'w', encoding='utf-8') as f:
@@ -119,6 +131,9 @@ class ProxyManager:
     def check_proxy(self, proxy: Dict, timeout: int = 10) -> Dict:
         import time
         try:
+            if self._is_quarantined(proxy):
+                return proxy
+
             protocol = proxy['protocol'].lower()
             
             if proxy['username'] and proxy['password']:
@@ -163,16 +178,24 @@ class ProxyManager:
                 proxy['status'] = 'alive'
                 proxy['response_time'] = round(response_time * 1000, 2)
                 proxy['last_check'] = time.strftime('%Y-%m-%d %H:%M:%S')
+                proxy['fail_count'] = 0
+                proxy['quarantine_until'] = 0
                 return proxy
             else:
                 proxy['status'] = 'dead'
                 proxy['response_time'] = None
                 proxy['last_check'] = time.strftime('%Y-%m-%d %H:%M:%S')
+                proxy['fail_count'] = int(proxy.get('fail_count') or 0) + 1
+                if int(proxy.get('fail_count') or 0) >= 3:
+                    proxy['quarantine_until'] = int(time.time()) + 86400
                 return proxy
         except Exception as e:
             proxy['status'] = 'dead'
             proxy['response_time'] = None
             proxy['last_check'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            proxy['fail_count'] = int(proxy.get('fail_count') or 0) + 1
+            if int(proxy.get('fail_count') or 0) >= 3:
+                proxy['quarantine_until'] = int(time.time()) + 86400
             print(f"Proxy check error: {e}")
             return proxy
     
@@ -201,7 +224,7 @@ class ProxyManager:
     
     def get_random_alive_proxy(self) -> Optional[Dict]:
         import random
-        alive_proxies = [p for p in self.proxies if p['status'] == 'alive']
+        alive_proxies = [p for p in self.proxies if p['status'] == 'alive' and not self._is_quarantined(p)]
         if alive_proxies:
             return random.choice(alive_proxies)
         return None

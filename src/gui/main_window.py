@@ -3,6 +3,7 @@ from tkinter import messagebox, filedialog
 import threading
 import logging
 import os
+import queue
 from typing import Optional, List
 from datetime import datetime
 from src.core import AccountManager, ProxyManager, BrowserManager
@@ -41,6 +42,12 @@ class AccountManagerGUI:
         self.loading_tasks = {}
         self._active_dialog = None
         self._checking_advanced_proxy = False
+
+        self._job_queue = queue.Queue()
+        self._job_current = None
+        self._job_status_var = ctk.StringVar(value="")
+        self._job_worker = threading.Thread(target=self._job_worker_loop, daemon=True)
+        self._job_worker.start()
         
         self.setup_error_logger()
         
@@ -49,6 +56,60 @@ class AccountManagerGUI:
         self.refresh_accounts()
         self.refresh_proxies()
         self.update_stats()
+
+        self._start_browser_watchdog()
+
+    def _start_browser_watchdog(self):
+        def tick():
+            def worker():
+                stale_ids = []
+                for account_id in list(self.browser_manager.drivers.keys()):
+                    if not self.browser_manager.is_driver_responsive(account_id, timeout=2):
+                        stale_ids.append(account_id)
+
+                for account_id in stale_ids:
+                    self.browser_manager.close_browser(account_id)
+                    self.root.after(0, lambda: self.show_toast(
+                        "Browser was not responding and was closed",
+                        "warning",
+                        6000
+                    ))
+
+                if stale_ids:
+                    self.root.after(0, self.refresh_accounts)
+
+            threading.Thread(target=worker, daemon=True).start()
+            self.root.after(30000, tick)
+
+        self.root.after(30000, tick)
+
+    def _set_job_badge(self):
+        pending = self._job_queue.qsize()
+        if self._job_current:
+            self._job_status_var.set(f"Jobs: {pending} | Running: {self._job_current}")
+        elif pending > 0:
+            self._job_status_var.set(f"Jobs: {pending} | Waiting")
+        else:
+            self._job_status_var.set("")
+
+    def _enqueue_job(self, name: str, func):
+        self._job_queue.put((name, func))
+        self.root.after(0, self._set_job_badge)
+
+    def _job_worker_loop(self):
+        while True:
+            name, func = self._job_queue.get()
+            self._job_current = name
+            try:
+                self.root.after(0, self._set_job_badge)
+                func()
+            except Exception as e:
+                msg = str(e)
+                self.root.after(0, lambda: self.show_toast(msg[:120], "error"))
+            finally:
+                self._job_current = None
+                self._job_queue.task_done()
+                self.root.after(0, self._set_job_badge)
     
     def _can_open_dialog(self) -> bool:
         if self._active_dialog is not None:
@@ -221,6 +282,20 @@ class AccountManagerGUI:
             command=self.refresh_accounts,
             width=100
         ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            left_buttons,
+            text="Export",
+            command=self.export_accounts_encrypted,
+            width=90
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            left_buttons,
+            text="Import",
+            command=self.import_accounts_encrypted,
+            width=90
+        ).pack(side="left", padx=5)
         
         right_search = ctk.CTkFrame(toolbar_frame, fg_color="transparent")
         right_search.pack(side="right")
@@ -382,6 +457,14 @@ class AccountManagerGUI:
             fg_color=COLORS['danger'],
             hover_color="#c0392b"
         ).pack(side="right", padx=10, pady=12)
+
+        self.job_badge = ctk.CTkLabel(
+            header,
+            textvariable=self._job_status_var,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=COLORS['primary']
+        )
+        self.job_badge.pack(side="right", padx=10, pady=12)
 
         title = ctk.CTkLabel(header, text="Account Manager", font=self.font_h1)
         title.pack(side="left", padx=12, pady=12)
@@ -1429,6 +1512,55 @@ Accounts will not be deleted."):
             count = self.proxy_manager.add_proxies_from_file(file_path)
             self.show_toast(f"Imported {count} proxies successfully", "success")
             self.refresh_proxies()
+
+    def export_accounts_encrypted(self):
+        file_path = filedialog.asksaveasfilename(
+            title="Export Accounts",
+            defaultextension=".json",
+            filetypes=[("Encrypted JSON", "*.json"), ("All Files", "*.*")]
+        )
+
+        if not file_path:
+            return
+
+        dialog = ctk.CTkInputDialog(text="Enter export password:", title="Export Accounts")
+        password = dialog.get_input() or ""
+        password = password.strip()
+
+        if not password:
+            self.show_toast("Password is required", "warning")
+            return
+
+        try:
+            self.account_manager.export_accounts_encrypted(file_path, password)
+            self.show_toast("Accounts exported successfully", "success")
+        except Exception as e:
+            self.show_toast(str(e)[:120], "error")
+
+    def import_accounts_encrypted(self):
+        file_path = filedialog.askopenfilename(
+            title="Import Accounts",
+            filetypes=[("Encrypted JSON", "*.json"), ("All Files", "*.*")]
+        )
+
+        if not file_path:
+            return
+
+        dialog = ctk.CTkInputDialog(text="Enter import password:", title="Import Accounts")
+        password = dialog.get_input() or ""
+        password = password.strip()
+
+        if not password:
+            self.show_toast("Password is required", "warning")
+            return
+
+        try:
+            count = self.account_manager.import_accounts_encrypted(file_path, password)
+            self.show_toast(f"Imported {count} account(s)", "success")
+            self.refresh_accounts()
+            self.update_stats()
+        except Exception as e:
+            self.show_toast(str(e)[:120], "error")
     
     def check_all_proxies(self):
 
@@ -1454,8 +1586,8 @@ Accounts will not be deleted."):
                 progress_callback=lambda done, total_count: self.root.after(0, progress_update, done, total_count)
             )
             self.root.after(0, self._finish_proxy_check)
-        
-        threading.Thread(target=check_thread, daemon=True).start()
+
+        self._enqueue_job("Check proxies", check_thread)
     
     def check_single_proxy(self, index: int):
 
@@ -1532,8 +1664,8 @@ Accounts will not be deleted."):
             
             self.proxy_manager.save_proxies()
             self.root.after(0, self._finish_proxy_check)
-        
-        threading.Thread(target=check_thread, daemon=True).start()
+
+        self._enqueue_job("Advanced proxy check", check_thread)
     
     def _prompt_api_key(self) -> Optional[str]:
 
@@ -1914,6 +2046,8 @@ Security Issues:
         logger.info(f"Opening account: {account.get('name')}")
         logger.info(f"Email: {account.get('email', 'Not set')}")
         logger.info(f"Type: {account['type']}")
+        browser_type = account.get('browser', 'chrome')
+        logger.info(f"Browser: {browser_type}")
         
         def open_browser_thread():
             try:
@@ -1939,7 +2073,8 @@ Security Issues:
                 driver = self.browser_manager.create_browser(
                     account_id,
                     account['profile_path'],
-                    proxy
+                    proxy,
+                    browser_type
                 )
                 
                 logger.info("Browser created successfully")
@@ -2010,12 +2145,18 @@ Security Issues:
                         "error"
                     ))
                 else:
-                    self.root.after(0, lambda: self.show_toast(
-                        f"Failed to open browser: {error_msg[:50]}...",
-                        "error"
-                    ))
+                    if "DRIVER_DOWNLOAD_FAILED" in error_msg:
+                        self.root.after(0, lambda: self.show_toast(
+                            "Driver download failed. Please enable internet and disable proxy.",
+                            "error"
+                        ))
+                    else:
+                        self.root.after(0, lambda: self.show_toast(
+                            f"Failed to open browser: {error_msg[:50]}...",
+                            "error"
+                        ))
         
-        threading.Thread(target=open_browser_thread, daemon=True).start()
+        self._enqueue_job(f"Open: {account.get('name') or account_id[:8]}", open_browser_thread)
     
     def show_toast(self, message: str, type: str = "info", duration: int = 5000):
         toast_colors = {

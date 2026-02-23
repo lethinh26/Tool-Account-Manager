@@ -108,3 +108,9 @@ Tool Manager Account/
 - Google Chrome browser
 - Internet connection
 - Windows
+
+## Driver Downloads
+
+- ChromeDriver: https://chromedriver.chromium.org/downloads
+- EdgeDriver: https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/
+- GeckoDriver (Firefox): https://github.com/mozilla/geckodriver/releases

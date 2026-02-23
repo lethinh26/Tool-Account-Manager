@@ -101,6 +101,22 @@ class AddAccountDialog(ctk.CTkToplevel):
             font=ctk.CTkFont(size=13)
         )
         self.name_entry.pack(fill="x", padx=20, pady=5)
+
+        ctk.CTkFrame(form_frame, height=2, fg_color=COLORS['light']).pack(fill="x", padx=20, pady=20)
+
+        ctk.CTkLabel(
+            form_frame,
+            text="Browser:",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(10, 5))
+
+        self.browser_var = ctk.StringVar(value="Chrome")
+        ctk.CTkOptionMenu(
+            form_frame,
+            values=["Chrome", "Edge", "Firefox"],
+            variable=self.browser_var,
+            width=220
+        ).pack(anchor="w", padx=20, pady=5)
         
         ctk.CTkFrame(form_frame, height=2, fg_color=COLORS['light']).pack(fill="x", padx=20, pady=20)
         
@@ -241,6 +257,7 @@ class AddAccountDialog(ctk.CTkToplevel):
         account_type = self.account_type_var.get()
         account_email = self.email_entry.get().strip()
         account_name = self.name_entry.get().strip()
+        browser = (self.browser_var.get() or "Chrome").lower()
         use_proxy = self.use_proxy_var.get()
         proxy_mode = self.proxy_mode_var.get() if use_proxy else None
         proxy_id = None
@@ -263,6 +280,7 @@ class AddAccountDialog(ctk.CTkToplevel):
             proxy_mode=proxy_mode,
             proxy_id=proxy_id
         )
+        account['browser'] = browser
         account['name'] = account_name
         account['notes'] = notes
         
@@ -288,7 +306,8 @@ class AddAccountDialog(ctk.CTkToplevel):
                 driver = browser_manager.create_browser(
                     account['id'],
                     account['profile_path'],
-                    proxy
+                    proxy,
+                    account.get('browser', 'chrome')
                 )
                 
                 browser_manager.open_login_page(driver, account_type)
@@ -616,38 +635,54 @@ class EditAccountDialog(ctk.CTkToplevel):
     
     def create_widgets(self):
         """Create dialog widgets"""
+        content = ctk.CTkScrollableFrame(self)
+        content.pack(fill="both", expand=True, padx=20, pady=10)
+
         title = ctk.CTkLabel(
-            self,
+            content,
             text="Edit Account",
             font=ctk.CTkFont(size=20, weight="bold")
         )
         title.pack(pady=20)
         
-        form_frame = ctk.CTkScrollableFrame(self)
-        form_frame.pack(fill="both", expand=True, padx=20, pady=10)
-        
         ctk.CTkLabel(
-            form_frame,
+            content,
             text="Account Type:",
             font=ctk.CTkFont(size=14, weight="bold")
         ).pack(anchor="w", padx=20, pady=(20, 5))
         
         type_text = self.account['type'].title()
         ctk.CTkLabel(
-            form_frame,
+            content,
             text=type_text,
             font=ctk.CTkFont(size=13),
             text_color="gray"
         ).pack(anchor="w", padx=20, pady=(0, 10))
+
+        ctk.CTkLabel(
+            content,
+            text="Browser:",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(anchor="w", padx=20, pady=(10, 5))
+
+        self.browser_var = ctk.StringVar(value=(self.account.get('browser') or 'chrome').title())
+
+        self.browser_dropdown = ctk.CTkOptionMenu(
+            content,
+            values=["Chrome", "Edge", "Firefox"],
+            variable=self.browser_var,
+            width=200
+        )
+        self.browser_dropdown.pack(anchor="w", padx=20, pady=5)
         
         ctk.CTkLabel(
-            form_frame,
+            content,
             text="Email:",
             font=ctk.CTkFont(size=14, weight="bold")
         ).pack(anchor="w", padx=20, pady=(10, 5))
         
         self.email_entry = ctk.CTkEntry(
-            form_frame,
+            content,
             placeholder_text="example@gmail.com",
             height=40,
             font=ctk.CTkFont(size=13)
@@ -657,13 +692,13 @@ class EditAccountDialog(ctk.CTkToplevel):
             self.email_entry.insert(0, self.account['email'])
         
         ctk.CTkLabel(
-            form_frame,
+            content,
             text="Account Name:",
             font=ctk.CTkFont(size=14, weight="bold")
         ).pack(anchor="w", padx=20, pady=(10, 5))
         
         self.name_entry = ctk.CTkEntry(
-            form_frame,
+            content,
             placeholder_text="Enter account name",
             height=40,
             font=ctk.CTkFont(size=13)
@@ -673,13 +708,13 @@ class EditAccountDialog(ctk.CTkToplevel):
             self.name_entry.insert(0, self.account['name'])
         
         ctk.CTkLabel(
-            form_frame,
+            content,
             text="Notes (Optional):",
             font=ctk.CTkFont(size=14, weight="bold")
         ).pack(anchor="w", padx=20, pady=(10, 5))
         
         self.notes_entry = ctk.CTkTextbox(
-            form_frame,
+            content,
             height=80,
             font=ctk.CTkFont(size=12)
         )
@@ -724,7 +759,8 @@ class EditAccountDialog(ctk.CTkToplevel):
         
         updates = {
             'name': name,
-            'notes': notes
+            'notes': notes,
+            'browser': self.browser_var.get().lower()
         }
         
         if email:
@@ -757,15 +793,18 @@ class EditAccountTabbedDialog(ctk.CTkToplevel):
         self.create_widgets()
     
     def create_widgets(self):
+        content = ctk.CTkScrollableFrame(self)
+        content.pack(fill="both", expand=True, padx=20, pady=10)
+
         header = ctk.CTkLabel(
-            self,
+            content,
             text="Edit Account",
             font=ctk.CTkFont(size=20, weight="bold")
         )
         header.pack(pady=20)
         
-        self.tabview = ctk.CTkTabview(self, width=460, height=380)
-        self.tabview.pack(padx=20, pady=10, fill="both", expand=True)
+        self.tabview = ctk.CTkTabview(content, width=440, height=360)
+        self.tabview.pack(padx=10, pady=10, fill="both", expand=True)
         
         self.tabview.add("Account")
         self.tabview.add("Proxy")
@@ -810,6 +849,16 @@ class EditAccountTabbedDialog(ctk.CTkToplevel):
         self.email_entry.pack(padx=20, pady=5)
         if self.account.get('email'):
             self.email_entry.insert(0, self.account['email'])
+
+        ctk.CTkLabel(tab, text="Browser:", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", padx=20, pady=(10, 5))
+        self.browser_var = ctk.StringVar(value=(self.account.get('browser') or 'chrome').title())
+        self.browser_dropdown = ctk.CTkOptionMenu(
+            tab,
+            values=["Chrome", "Edge", "Firefox"],
+            variable=self.browser_var,
+            width=200
+        )
+        self.browser_dropdown.pack(padx=20, pady=5, anchor="w")
         
         ctk.CTkLabel(tab, text="Notes:", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", padx=20, pady=(10, 5))
         self.notes_text = ctk.CTkTextbox(tab, width=400, height=120)
@@ -925,7 +974,8 @@ class EditAccountTabbedDialog(ctk.CTkToplevel):
             'notes': notes,
             'use_proxy': use_proxy,
             'proxy_mode': proxy_mode,
-            'proxy_id': proxy_id
+            'proxy_id': proxy_id,
+            'browser': self.browser_var.get().lower()
         }
         
         if email:
