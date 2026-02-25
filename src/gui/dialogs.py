@@ -113,7 +113,7 @@ class AddAccountDialog(ctk.CTkToplevel):
         self.browser_var = ctk.StringVar(value="Chrome")
         ctk.CTkOptionMenu(
             form_frame,
-            values=["Chrome", "Edge", "Firefox"],
+            values=["Chrome", "Chrome Mobile", "Edge", "Firefox"],
             variable=self.browser_var,
             width=220
         ).pack(anchor="w", padx=20, pady=5)
@@ -257,7 +257,7 @@ class AddAccountDialog(ctk.CTkToplevel):
         account_type = self.account_type_var.get()
         account_email = self.email_entry.get().strip()
         account_name = self.name_entry.get().strip()
-        browser = (self.browser_var.get() or "Chrome").lower()
+        browser = (self.browser_var.get() or "Chrome").lower().replace(" ", "_")
         use_proxy = self.use_proxy_var.get()
         proxy_mode = self.proxy_mode_var.get() if use_proxy else None
         proxy_id = None
@@ -665,11 +665,11 @@ class EditAccountDialog(ctk.CTkToplevel):
             font=ctk.CTkFont(size=14, weight="bold")
         ).pack(anchor="w", padx=20, pady=(10, 5))
 
-        self.browser_var = ctk.StringVar(value=(self.account.get('browser') or 'chrome').title())
+        self.browser_var = ctk.StringVar(value=(self.account.get('browser') or 'chrome').replace('_', ' ').title())
 
         self.browser_dropdown = ctk.CTkOptionMenu(
             content,
-            values=["Chrome", "Edge", "Firefox"],
+            values=["Chrome", "Chrome Mobile", "Edge", "Firefox"],
             variable=self.browser_var,
             width=200
         )
@@ -760,7 +760,7 @@ class EditAccountDialog(ctk.CTkToplevel):
         updates = {
             'name': name,
             'notes': notes,
-            'browser': self.browser_var.get().lower()
+            'browser': self.browser_var.get().lower().replace(" ", "_")
         }
         
         if email:
@@ -851,10 +851,10 @@ class EditAccountTabbedDialog(ctk.CTkToplevel):
             self.email_entry.insert(0, self.account['email'])
 
         ctk.CTkLabel(tab, text="Browser:", font=ctk.CTkFont(size=13, weight="bold")).pack(anchor="w", padx=20, pady=(10, 5))
-        self.browser_var = ctk.StringVar(value=(self.account.get('browser') or 'chrome').title())
+        self.browser_var = ctk.StringVar(value=(self.account.get('browser') or 'chrome').replace('_', ' ').title())
         self.browser_dropdown = ctk.CTkOptionMenu(
             tab,
-            values=["Chrome", "Edge", "Firefox"],
+            values=["Chrome", "Chrome Mobile", "Edge", "Firefox"],
             variable=self.browser_var,
             width=200
         )

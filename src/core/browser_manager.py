@@ -340,8 +340,8 @@ console.log('[Stealth] Anti-detect applied');
         Use local proxy server routes to remote proxy
         """
         try:
-            browser_type = (browser_type or 'chrome').lower()
-            if browser_type not in ['chrome', 'edge', 'firefox']:
+            browser_type = (browser_type or 'chrome').lower().replace(' ', '_')
+            if browser_type not in ['chrome', 'chrome_mobile', 'edge', 'firefox']:
                 browser_type = 'chrome'
 
             profile_dir = Path(profile_path).resolve()
@@ -356,7 +356,7 @@ console.log('[Stealth] Anti-detect applied');
             self._clear_cookies(browser_profile_dir, browser_type)
 
             driver_path = None
-            if browser_type == 'chrome':
+            if browser_type in ['chrome', 'chrome_mobile']:
                 driver_path = self._get_driver_path()
             elif browser_type == 'edge':
                 driver_path = self._get_edge_driver_path()
@@ -387,11 +387,16 @@ console.log('[Stealth] Anti-detect applied');
             else:
                 print("No proxy configured for this account")
 
+            is_mobile_chrome = browser_type == 'chrome_mobile'
             user_agent = self._get_stealth_user_agent()
+            if is_mobile_chrome:
+                user_agent = "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
             driver = None
             width, height = self._get_screen_resolution()
+            if is_mobile_chrome:
+                width, height = 430, 932
 
-            if browser_type == 'chrome':
+            if browser_type in ['chrome', 'chrome_mobile']:
                 chrome_options = Options()
                 chrome_options.add_argument(f"--user-data-dir={browser_profile_dir.as_posix()}")
 
@@ -407,6 +412,8 @@ console.log('[Stealth] Anti-detect applied');
                 chrome_options.add_argument("--disable-site-isolation-trials")
                 chrome_options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
                 chrome_options.add_experimental_option('useAutomationExtension', False)
+                if is_mobile_chrome:
+                    chrome_options.add_experimental_option("mobileEmulation", {"deviceName": "Pixel 7"})
                 chrome_options.add_experimental_option("prefs", {
                     "intl.accept_languages": "en-US,en",
                     "profile.default_content_setting_values.notifications": 1
@@ -565,8 +572,8 @@ console.log('[Stealth] Anti-detect applied');
                     driver.execute_cdp_cmd("Emulation.setDeviceMetricsOverride", {
                         "width": width,
                         "height": height,
-                        "deviceScaleFactor": 1,
-                        "mobile": False
+                        "deviceScaleFactor": 3 if is_mobile_chrome else 1,
+                        "mobile": is_mobile_chrome
                     })
                 except:
                     pass
